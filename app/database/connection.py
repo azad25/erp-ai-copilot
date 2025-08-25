@@ -17,6 +17,18 @@ from app.config.settings import get_settings
 logger = structlog.get_logger(__name__)
 settings = get_settings()
 
+# Global instance of the database manager
+_db_manager = None
+
+
+async def get_db_manager() -> 'DatabaseManager':
+    """Get or create the database manager instance."""
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = DatabaseManager()
+        await _db_manager.initialize()
+    return _db_manager
+
 
 class DatabaseManager:
     """Database connection manager."""
@@ -163,12 +175,24 @@ class DatabaseManager:
                 raise
             finally:
                 await session.close()
+                
+    def get_postgres_client(self):
+        """Get PostgreSQL client."""
+        if not self.postgres_engine:
+            raise RuntimeError("PostgreSQL not initialized")
+        return self.postgres_engine
     
     def get_mongodb_database(self):
         """Get MongoDB database instance."""
         if not self.mongodb_client:
             raise RuntimeError("MongoDB not initialized")
         return self.mongodb_client[settings.mongodb.database]
+        
+    def get_mongo_client(self):
+        """Get MongoDB client."""
+        if not self.mongodb_client:
+            raise RuntimeError("MongoDB not initialized")
+        return self.mongodb_client
     
     def get_redis_client(self) -> Redis:
         """Get Redis client."""

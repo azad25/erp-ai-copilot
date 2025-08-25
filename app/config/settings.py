@@ -2,7 +2,8 @@
 Configuration settings for the AI Copilot service.
 """
 from typing import List, Optional
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, validator
+from pydantic_settings import BaseSettings
 import os
 
 
@@ -188,10 +189,14 @@ class WebSocketSettings(BaseSettings):
 class GRPCSettings(BaseSettings):
     """gRPC server configuration settings."""
     
+    port: int = Field(default=50052, env="GRPC_PORT")
     max_workers: int = Field(default=10, env="GRPC_MAX_WORKERS")
     max_concurrent_rpcs: int = Field(default=100, env="GRPC_MAX_CONCURRENT_RPCS")
     max_connection_idle: int = Field(default=300, env="GRPC_MAX_CONNECTION_IDLE")
     max_connection_age: int = Field(default=600, env="GRPC_MAX_CONNECTION_AGE")
+    max_message_size: int = Field(default=52428800, env="GRPC_MAX_MESSAGE_SIZE")  # 50MB
+    ssl_cert_path: str = Field(default="/etc/ssl/certs/grpc-server.crt", env="GRPC_SSL_CERT_PATH")
+    ssl_key_path: str = Field(default="/etc/ssl/private/grpc-server.key", env="GRPC_SSL_KEY_PATH")
     
     class Config:
         env_prefix = "GRPC_"

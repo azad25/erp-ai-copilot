@@ -14,7 +14,8 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 from prometheus_client.openmetrics.exposition import generate_latest as generate_openmetrics
 
 from app.config.settings import get_settings
-from app.database.connection import init_database, close_database
+from app.database.connection import init_database, close_database, check_database_health, get_db_manager
+from app.services.kafka_service import kafka_service
 from app.api.v1.router import api_router
 from app.api.websocket import websocket_router
 from app.api.grpc import grpc_router
@@ -22,6 +23,7 @@ from app.middleware.auth import AuthMiddleware
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.core.metrics import setup_metrics
+from app.rag.service import RAGService
 
 # Configure structured logging
 structlog.configure(
@@ -61,9 +63,28 @@ async def lifespan(app: FastAPI):
         await init_database()
         logger.info("Database connections initialized")
         
+        # Initialize Kafka service
+        await kafka_service.initialize()
+        logger.info("Kafka service initialized")
+        
         # Setup metrics
         setup_metrics()
         logger.info("Metrics setup completed")
+        
+        # Initialize RAG engine if enabled
+        if settings.rag.enabled:
+            try:
+                db_manager = await get_db_manager()
+                rag_service = RAGService(db_manager)
+                await rag_service.initialize()
+                logger.info("RAG engine initialized successfully")
+                app.state.rag_service = rag_service
+            except Exception as e:
+                logger.error("Failed to initialize RAG engine", error=str(e))
+                if settings.service.debug:
+                    raise
+        else:
+            logger.info("RAG engine disabled in settings")
         
         yield
         
@@ -74,6 +95,12 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("Shutting down AI Copilot service")
+        
+        # Close Kafka connections
+        await kafka_service.close()
+        logger.info("Kafka connections closed")
+        
+        # Close database connections
         await close_database()
         logger.info("Service shutdown completed")
 
@@ -199,47 +226,23 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def root():
     """Root endpoint."""
     return {
-        "service": "AI Copilot Service",
+        "message": "AI Copilot Service is running",
         "version": settings.service.version,
-        "environment": settings.service.environment,
-        "status": "running",
-        "timestamp": time.time(),
+        "status": "healthy",
+        "timestamp": time.time()
     }
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    from app.database.connection import check_database_health
+    db_health = await check_database_health()
     
-    try:
-        db_health = await check_database_health()
-        
-        # Determine overall health
-        overall_status = "healthy"
-        if any(service["status"] == "unhealthy" for service in db_health.values()):
-            overall_status = "degraded"
-        if any(service["status"] == "not_initialized" for service in db_health.values()):
-            overall_status = "initializing"
-        
-        return {
-            "status": overall_status,
-            "timestamp": time.time(),
-            "version": settings.service.version,
-            "environment": settings.service.environment,
-            "services": db_health,
-        }
-        
-    except Exception as e:
-        logger.error("Health check failed", error=str(e))
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "unhealthy",
-                "timestamp": time.time(),
-                "error": str(e),
-            }
-        )
+    return {
+        "status": "healthy",
+        "database": db_health,
+        "timestamp": time.time()
+    }
 
 
 @app.get("/metrics")
@@ -248,85 +251,15 @@ async def metrics():
     return generate_latest()
 
 
-@app.get("/metrics/openmetrics")
-async def openmetrics():
-    """OpenMetrics format metrics endpoint."""
-    return generate_openmetrics()
-
-
-@app.get("/ready")
-async def readiness_check():
-    """Readiness check endpoint."""
-    from app.database.connection import check_database_health
+@app.get("/async-test")
+async def async_test():
+    """Test endpoint for async/await patterns."""
+    import asyncio
     
-    try:
-        db_health = await check_database_health()
-        
-        # Check if all services are healthy
-        all_healthy = all(service["status"] == "healthy" for service in db_health.values())
-        
-        if all_healthy:
-            return {"status": "ready", "timestamp": time.time()}
-        else:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "status": "not_ready",
-                    "timestamp": time.time(),
-                    "services": db_health,
-                }
-            )
-            
-    except Exception as e:
-        logger.error("Readiness check failed", error=str(e))
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "not_ready",
-                "timestamp": time.time(),
-                "error": str(e),
-            }
-        )
-
-
-@app.get("/info")
-async def service_info():
-    """Service information endpoint."""
+    # Simulate async operations
+    await asyncio.sleep(0.1)
+    
     return {
-        "service": {
-            "name": settings.service.name,
-            "version": settings.service.version,
-            "environment": settings.service.environment,
-            "debug": settings.service.debug,
-        },
-        "capabilities": {
-            "ai_models": {
-                "openai": bool(settings.ai.openai_api_key),
-                "anthropic": bool(settings.ai.anthropic_api_key),
-                "ollama": True,  # Always available locally
-            },
-            "rag_enabled": settings.rag.enabled,
-            "websocket": True,
-            "grpc": True,
-            "background_tasks": True,
-        },
-        "limits": {
-            "max_concurrent_requests": settings.service.max_concurrent_requests,
-            "request_timeout": settings.service.request_timeout,
-            "memory_limit_mb": settings.service.memory_limit_mb,
-        },
-        "timestamp": time.time(),
+        "message": "Async operations completed successfully",
+        "timestamp": time.time()
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    
-    uvicorn.run(
-        "app.main:app",
-        host=settings.service.host,
-        port=settings.service.port,
-        reload=settings.service.debug,
-        workers=settings.service.workers,
-        log_level=settings.monitoring.log_level.lower(),
-    )
