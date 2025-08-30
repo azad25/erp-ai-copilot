@@ -53,28 +53,34 @@ class AICopilotServicerImpl(AICopilotServicer):
                 model=model
             )
             
-            # Process request with master agent
-            agent_response = await self.master_agent.process_message(
+            # Create agent request
+            from app.agents.base_agent import AgentRequest
+            agent_request = AgentRequest(
                 message=message,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                agent_type=agent_type,
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                context=context_data
+                context=context_data or {},
+                session_id=conversation_id,
+                metadata={
+                    "user_id": user_id,
+                    "agent_type": agent_type,
+                    "model": model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
             )
+            
+            # Process request with master agent
+            agent_response = await self.master_agent.execute(agent_request)
             
             # Create gRPC response
             response = ChatResponse(
-                content=agent_response.get("content", ""),
+                content=agent_response.content,
                 conversation_id=conversation_id,
-                message_id=agent_response.get("message_id", ""),
-                response_type="text",
+                message_id=getattr(agent_response, 'message_id', ''),
+                response_type=getattr(agent_response, 'response_type', 'text'),
                 timestamp=int(time.time()),
-                metadata=agent_response.get("metadata", ""),
-                error="",
-                suggested_actions=agent_response.get("suggested_actions", "")
+                metadata=agent_response.metadata or "",
+                error=getattr(agent_response, 'error', ''),
+                suggested_actions=getattr(agent_response, 'suggested_actions', '')
             )
             
             # Return response
@@ -192,9 +198,8 @@ class AICopilotServicerImpl(AICopilotServicer):
 # gRPC server
 grpc_server = None
 
-@grpc_router.on_event("startup")
 async def start_grpc_server():
-    """Start the gRPC server on application startup."""
+    """Start the gRPC server."""
     global grpc_server
     
     try:
@@ -237,26 +242,29 @@ async def start_grpc_server():
         await server.start()
         grpc_server = server
         
-        logger.info("gRPC server started successfully", port=settings.grpc.port)
+        # Handle server termination
+        async def serve():
+            try:
+                await server.wait_for_termination()
+            except asyncio.CancelledError:
+                await server.stop(grace=5)
+        
+        # Return the serve coroutine
+        return serve()
+        
     except Exception as e:
         logger.error("Failed to start gRPC server", error=str(e), exc_info=True)
         raise
 
 @grpc_router.on_event("shutdown")
 async def stop_grpc_server():
-    """Stop the gRPC server on application shutdown."""
+    """Stop the gRPC server."""
     global grpc_server
     
     if grpc_server is not None:
         try:
-            logger.info("Stopping gRPC server")
-            
-            # Stop accepting new RPCs
-            await grpc_server.stop(grace=5.0)
-            
-            # Wait for all RPCs to finish
-            await grpc_server.wait_for_termination()
-            
+            await grpc_server.stop(5)  # 5 second grace period
+            logger.info("gRPC server stopped")
             logger.info("gRPC server stopped successfully")
         except Exception as e:
             logger.error("Error stopping gRPC server", error=str(e), exc_info=True)

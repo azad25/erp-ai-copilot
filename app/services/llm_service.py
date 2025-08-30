@@ -96,7 +96,7 @@ class OpenAIProvider(BaseLLMProvider):
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         if not self.client:
-            raise AIModelError("OpenAI client not initialized")
+            raise AIModelError("openai", request.model, "OpenAI client not initialized")
 
         try:
             messages = []
@@ -124,11 +124,11 @@ class OpenAIProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            raise AIModelError(f"OpenAI API error: {str(e)}")
+            raise AIModelError("openai", request.model, f"OpenAI API error: {str(e)}")
 
     async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
         if not self.client:
-            raise AIModelError("OpenAI client not initialized")
+            raise AIModelError("openai", request.model, "OpenAI client not initialized")
 
         try:
             messages = []
@@ -153,7 +153,7 @@ class OpenAIProvider(BaseLLMProvider):
                     yield chunk.choices[0].delta.content
 
         except Exception as e:
-            raise AIModelError(f"OpenAI streaming error: {str(e)}")
+            raise AIModelError("openai", request.model, f"OpenAI streaming error: {str(e)}")
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -170,7 +170,7 @@ class AnthropicProvider(BaseLLMProvider):
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         if not self.client:
-            raise AIModelError("Anthropic client not initialized")
+            raise AIModelError("anthropic", request.model, "Anthropic client not initialized")
 
         try:
             system_prompt = request.system_prompt
@@ -197,11 +197,11 @@ class AnthropicProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            raise AIModelError(f"Anthropic API error: {str(e)}")
+            raise AIModelError("anthropic", request.model, f"Anthropic API error: {str(e)}")
 
     async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
         if not self.client:
-            raise AIModelError("Anthropic client not initialized")
+            raise AIModelError("anthropic", request.model, "Anthropic client not initialized")
 
         try:
             system_prompt = request.system_prompt
@@ -225,7 +225,7 @@ class AnthropicProvider(BaseLLMProvider):
                     yield chunk.delta.text
 
         except Exception as e:
-            raise AIModelError(f"Anthropic streaming error: {str(e)}")
+            raise AIModelError("anthropic", request.model, f"Anthropic streaming error: {str(e)}")
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -242,7 +242,7 @@ class OllamaProvider(BaseLLMProvider):
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         if not self.client:
-            raise AIModelError("Ollama client not initialized")
+            raise AIModelError("ollama", request.model, "Ollama client not initialized")
 
         try:
             messages = []
@@ -272,11 +272,11 @@ class OllamaProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            raise AIModelError(f"Ollama API error: {str(e)}")
+            raise AIModelError("ollama", request.model, f"Ollama API error: {str(e)}")
 
     async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
         if not self.client:
-            raise AIModelError("Ollama client not initialized")
+            raise AIModelError("ollama", request.model, "Ollama client not initialized")
 
         try:
             messages = []
@@ -303,7 +303,67 @@ class OllamaProvider(BaseLLMProvider):
                     yield chunk["message"]["content"]
 
         except Exception as e:
-            raise AIModelError(f"Ollama streaming error: {str(e)}")
+            raise AIModelError("ollama", request.model, f"Ollama streaming error: {str(e)}")
+
+
+# Gemini Integration
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
+class GeminiProvider:
+    """Gemini LLM Provider."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+        self.default_model = "gemini-1.5-flash"  # Default to a known working model
+
+    def _get_model_url(self, model: str) -> str:
+        """Get the API URL for the specified model."""
+        model_map = {
+            "gemini": "gemini-1.5-flash",
+            "gemini2.0:flash": "gemini-1.5-flash",
+            "gemini2.5:pro": "gemini-1.5-pro"
+        }
+        model_name = model_map.get(model, model)
+        return f"{self.base_url}/{model_name}:generateContent"
+
+    async def generate_content(self, prompt: str, model: str = None) -> str:
+        """Generate content using Gemini API."""
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is required")
+            
+        model = model or self.default_model
+        url = self._get_model_url(model)
+        
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+        
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.7,
+                "topP": 0.95,
+                "topK": 40,
+                "maxOutputTokens": 2048,
+            }
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+        except httpx.HTTPStatusError as e:
+            error_msg = f"API request failed with status {e.response.status_code}: {e.response.text}"
+            raise AIModelError("gemini", model, error_msg) from e
+        except Exception as e:
+            raise AIModelError("gemini", model, str(e)) from e
 
 
 class LLMService:
@@ -342,6 +402,12 @@ class LLMService:
             self.providers["ollama"] = ollama_provider
             self.logger.info("Ollama provider initialized")
 
+        # Gemini
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if gemini_api_key:
+            self.providers["gemini"] = GeminiProvider(gemini_api_key)
+            self.logger.info("Gemini provider initialized")
+
     def get_available_providers(self) -> List[str]:
         """Get list of available providers"""
         return list(self.providers.keys())
@@ -351,10 +417,9 @@ class LLMService:
         models = {
             "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
             "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+            "gemini": ["gemini2.0:flash", "gemini2.5:pro"],
             "ollama": [
-                "llama2", "llama3", "llama3.1", "llama3.2", "codellama",
-                "mistral", "mixtral", "gemma", "gemma2", "qwen", "qwen2",
-                "deepseek-coder", "codestral", "phi3", "phi3.5"
+                "unibase-erp",  # Custom ERP model
             ]
         }
         
@@ -378,6 +443,7 @@ class LLMService:
             "claude-3-opus-20240229": "anthropic",
             
             # Ollama models (partial list)
+            "unibase-erp": "ollama",  # Custom ERP model
             "llama2": "ollama",
             "llama3": "ollama",
             "llama3.1": "ollama",
@@ -393,6 +459,11 @@ class LLMService:
             "codestral": "ollama",
             "phi3": "ollama",
             "phi3.5": "ollama",
+            
+            # Gemini models
+            "gemini2.0:flash": "gemini",
+            "gemini2.5:pro": "gemini",
+            "gemini": "gemini",
         }
         
         return model_mapping.get(model)
@@ -402,31 +473,66 @@ class LLMService:
         provider_name = self.get_provider_for_model(request.model)
         
         if not provider_name:
-            raise AIModelError(f"Unknown model: {request.model}")
+            raise AIModelError("unknown", request.model, f"Unknown model: {request.model}")
             
         provider = self.providers.get(provider_name)
         if not provider:
-            raise AIModelError(f"Provider {provider_name} not available for model {request.model}")
+            raise AIModelError(provider_name, request.model, f"Provider {provider_name} not available for model {request.model}")
 
         self.logger.info(
             "Generating LLM response",
             provider=provider_name,
             model=request.model,
-            stream=request.stream
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
         )
 
-        return await provider.generate(request)
+        try:
+            if provider_name == "openai":
+                return await self._generate_openai(provider, request)
+            elif provider_name == "anthropic":
+                return await self._generate_anthropic(provider, request)
+            elif provider_name == "ollama":
+                return await self._generate_ollama(provider, request)
+            elif provider_name == "gemini":
+                # Combine all user messages into a single prompt
+                prompt = "\n".join(
+                    f"{m.role.upper()}: {m.content}" 
+                    for m in request.messages
+                )
+                response = await provider.generate_content(
+                    prompt=prompt,
+                    model=request.model
+                )
+                return LLMResponse(
+                    content=response,
+                    model=request.model,
+                    tokens_used=len(response.split()),
+                    finish_reason="stop",
+                    metadata={"provider": "gemini"}
+                )
+            else:
+                raise AIModelError(provider_name, request.model, f"Unsupported provider: {provider_name}")
+        except Exception as e:
+            self.logger.error(
+                "Error generating LLM response",
+                error=str(e),
+                provider=provider_name,
+                model=request.model,
+                exc_info=True,
+            )
+            raise AIModelError(provider_name, request.model, str(e)) from e
 
     async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
         """Generate streaming response using the appropriate provider"""
         provider_name = self.get_provider_for_model(request.model)
         
         if not provider_name:
-            raise AIModelError(f"Unknown model: {request.model}")
+            raise AIModelError("unknown", request.model, f"Unknown model: {request.model}")
             
         provider = self.providers.get(provider_name)
         if not provider:
-            raise AIModelError(f"Provider {provider_name} not available for model {request.model}")
+            raise AIModelError(provider_name, request.model, f"Provider {provider_name} not available for model {request.model}")
 
         async for chunk in provider.generate_stream(request):
             yield chunk

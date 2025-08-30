@@ -25,6 +25,103 @@ class ActionAgent(BaseAgent):
     - Data validation and integrity
     - Transaction management
     """
+    
+    def _get_default_system_prompt(self) -> str:
+        """Get the default system prompt for the action agent."""
+        return """
+        You are an Action Agent specialized in executing CRUD operations and workflows in the ERP system.
+        Your responsibilities include:
+        - Executing create, read, update, and delete operations on ERP data
+        - Managing workflows and business processes
+        - Validating data integrity before operations
+        - Handling transactions and rollbacks
+        - Enforcing business rules and validations
+        - Generating appropriate audit logs for all operations
+        """
+    
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Get the list of tools available to the action agent."""
+        return [
+            {
+                "name": "create_record",
+                "description": "Create a new record in the specified module",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "module": {
+                            "type": "string",
+                            "enum": ["sales", "inventory", "purchase", "accounting", "hr", "crm"],
+                            "description": "The ERP module to create the record in"
+                        },
+                        "data": {
+                            "type": "object",
+                            "description": "The data for the new record"
+                        }
+                    },
+                    "required": ["module", "data"]
+                }
+            },
+            {
+                "name": "update_record",
+                "description": "Update an existing record",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "module": {
+                            "type": "string",
+                            "enum": ["sales", "inventory", "purchase", "accounting", "hr", "crm"],
+                            "description": "The ERP module containing the record"
+                        },
+                        "record_id": {
+                            "type": "string",
+                            "description": "ID of the record to update"
+                        },
+                        "updates": {
+                            "type": "object",
+                            "description": "Fields to update"
+                        }
+                    },
+                    "required": ["module", "record_id", "updates"]
+                }
+            },
+            {
+                "name": "delete_record",
+                "description": "Delete a record",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "module": {
+                            "type": "string",
+                            "enum": ["sales", "inventory", "purchase", "accounting", "hr", "crm"],
+                            "description": "The ERP module containing the record"
+                        },
+                        "record_id": {
+                            "type": "string",
+                            "description": "ID of the record to delete"
+                        }
+                    },
+                    "required": ["module", "record_id"]
+                }
+            },
+            {
+                "name": "execute_workflow",
+                "description": "Execute a predefined workflow",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "workflow_name": {
+                            "type": "string",
+                            "description": "Name of the workflow to execute"
+                        },
+                        "parameters": {
+                            "type": "object",
+                            "description": "Parameters required for the workflow"
+                        }
+                    },
+                    "required": ["workflow_name"]
+                }
+            }
+        ]
 
     def __init__(self, model: str = "gpt-4"):
         super().__init__(AgentType.ACTION, model)

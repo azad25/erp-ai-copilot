@@ -11,7 +11,7 @@ from sqlalchemy import select, and_
 import structlog
 
 from app.database.connection import get_db_session
-from app.database.models.database import Conversation, Message, User
+from app.models.database import Conversation, Message, User
 from app.models.api import (
     ChatRequest, ChatResponse, ChatStreamResponse,
     CreateConversationRequest, UpdateConversationRequest,

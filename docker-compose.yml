@@ -7,8 +7,8 @@ services:
       dockerfile: Dockerfile
     container_name: erp-ai-copilot
     ports:
-      - "8080:8080"  # HTTP API
-      - "8081:8081"  # WebSocket
+      - "8003:8003"  # HTTP API
+      - "50055:50055"  # gRPC
     environment:
       # Database Configuration
       - DB_HOST=postgres
@@ -38,7 +38,7 @@ services:
       - KAFKA_TOPIC_PREFIX=ai-copilot
       
       # Auth Service Configuration
-      - AUTH_SERVICE_GRPC_HOST=auth-service
+      - AUTH_SERVICE_GRPC_HOST=erp-suite-auth-service
       - AUTH_SERVICE_GRPC_PORT=50051
       
       # API Gateway Configuration
@@ -47,6 +47,7 @@ services:
       # AI Model Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OLLAMA_BASE_URL=http://ollama:11434
       
       # Service Configuration

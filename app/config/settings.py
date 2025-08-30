@@ -2,7 +2,7 @@
 Configuration settings for the AI Copilot service.
 """
 from typing import List, Optional
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 import os
 
@@ -87,19 +87,19 @@ class QdrantSettings(BaseSettings):
 class KafkaSettings(BaseSettings):
     """Kafka configuration settings."""
     
-    brokers: List[str] = Field(default=["localhost:9092"], env="KAFKA_BROKERS")
+    brokers: str = Field(default="localhost:9092", env="KAFKA_BROKERS")
     topic_prefix: str = Field(default="ai-copilot", env="KAFKA_TOPIC_PREFIX")
     client_id: str = Field(default="ai-copilot-service", env="KAFKA_CLIENT_ID")
     group_id: str = Field(default="ai-copilot-group", env="KAFKA_GROUP_ID")
     auto_offset_reset: str = Field(default="earliest", env="KAFKA_AUTO_OFFSET_RESET")
     enable_auto_commit: bool = Field(default=True, env="KAFKA_ENABLE_AUTO_COMMIT")
     
-    @validator('brokers', pre=True)
-    def parse_brokers(cls, v):
-        """Parse brokers string to list."""
-        if isinstance(v, str):
-            return [broker.strip() for broker in v.split(',')]
-        return v
+    @property
+    def brokers_list(self) -> List[str]:
+        """Get brokers as a list."""
+        if isinstance(self.brokers, str):
+            return [broker.strip() for broker in self.brokers.split(',')]
+        return self.brokers
     
     class Config:
         env_prefix = "KAFKA_"
@@ -112,11 +112,18 @@ class AuthServiceSettings(BaseSettings):
     port: int = Field(default=50051, env="AUTH_SERVICE_GRPC_PORT")
     timeout: int = Field(default=10, env="AUTH_SERVICE_GRPC_TIMEOUT")
     max_retries: int = Field(default=3, env="AUTH_SERVICE_GRPC_MAX_RETRIES")
+    use_ssl: bool = Field(default=False, env="AUTH_SERVICE_GRPC_USE_SSL")
     
     @property
     def address(self) -> str:
         """Get gRPC address."""
         return f"{self.host}:{self.port}"
+    
+    @property
+    def grpc_url(self) -> str:
+        """Get gRPC URL with protocol."""
+        protocol = "https" if self.use_ssl else "http"
+        return f"{protocol}://{self.host}:{self.port}"
     
     class Config:
         env_prefix = "AUTH_SERVICE_GRPC_"
@@ -139,7 +146,7 @@ class AISettings(BaseSettings):
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
-    default_model: str = Field(default="gpt-4", env="AI_DEFAULT_MODEL")
+    default_model: str = Field(default="unibase-erp", env="AI_DEFAULT_MODEL")
     max_tokens: int = Field(default=4000, env="AI_MAX_TOKENS")
     temperature: float = Field(default=0.7, env="AI_TEMPERATURE")
     
@@ -208,16 +215,16 @@ class SecuritySettings(BaseSettings):
     jwt_secret: str = Field(default="your-super-secret-jwt-key-change-in-production", env="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
     jwt_expiry_hours: int = Field(default=24, env="JWT_EXPIRY_HOURS")
-    cors_origins: List[str] = Field(default=["http://localhost:3000"], env="CORS_ORIGINS")
+    cors_origins: str = Field(default="http://localhost:3000", env="CORS_ORIGINS")
     rate_limit_requests: int = Field(default=100, env="RATE_LIMIT_REQUESTS")
     rate_limit_window: int = Field(default=3600, env="RATE_LIMIT_WINDOW")
     
-    @validator('cors_origins', pre=True)
-    def parse_cors_origins(cls, v):
-        """Parse CORS origins string to list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(',')]
-        return v
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Get CORS origins as a list."""
+        if isinstance(self.cors_origins, str):
+            return [origin.strip() for origin in self.cors_origins.split(',')]
+        return self.cors_origins
     
     class Config:
         env_prefix = "SECURITY_"
@@ -239,27 +246,37 @@ class MonitoringSettings(BaseSettings):
 class ServiceSettings(BaseSettings):
     """Main service configuration settings."""
     
+    model_config = {"extra": "ignore", "env_prefix": "SERVICE_"}
+    
     name: str = Field(default="ai-copilot", env="SERVICE_NAME")
     version: str = Field(default="1.0.0", env="SERVICE_VERSION")
     environment: str = Field(default="development", env="ENVIRONMENT")
     debug: bool = Field(default=False, env="DEBUG")
-    
-    # HTTP server settings
     host: str = Field(default="0.0.0.0", env="HOST")
-    port: int = Field(default=8080, env="PORT")
+    port: int = Field(default=8003, env="PORT")
+    mode: str = Field(default="http", env="SERVICE_MODE", 
+                     description="Service mode: 'http', 'grpc', or 'both'")
     workers: int = Field(default=1, env="WORKERS")
-    
-    # Resource limits
     max_concurrent_requests: int = Field(default=100, env="MAX_CONCURRENT_REQUESTS")
     request_timeout: int = Field(default=300, env="REQUEST_TIMEOUT")
     memory_limit_mb: int = Field(default=2048, env="MEMORY_LIMIT_MB")
+
+
+class LLMSettings(BaseSettings):
+    """LLM configuration settings."""
     
-    class Config:
-        env_prefix = "SERVICE_"
+    gemini_api_key: Optional[str] = Field(default=None, env="GEMINI_API_KEY")
 
 
 class Settings(BaseSettings):
     """Main settings class that combines all configuration sections."""
+    
+    model_config = {
+        "extra": "ignore",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False
+    }
     
     # Service configuration
     service: ServiceSettings = ServiceSettings()
@@ -288,10 +305,8 @@ class Settings(BaseSettings):
     security: SecuritySettings = SecuritySettings()
     monitoring: MonitoringSettings = MonitoringSettings()
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    # LLM settings
+    llm: LLMSettings = LLMSettings()
 
 
 # Global settings instance

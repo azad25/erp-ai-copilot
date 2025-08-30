@@ -29,6 +29,69 @@ class MasterAgent(BaseAgent):
     Uses LLM service for intelligent orchestration and agent selection.
     """
     
+    def _get_default_system_prompt(self) -> str:
+        """Get the default system prompt for the master agent."""
+        return """
+        You are the Master Orchestrator for the ERP AI Copilot system. Your responsibilities include:
+        - Analyzing user requests to determine the most appropriate agent or combination of agents
+        - Coordinating between specialized agents to fulfill complex requests
+        - Ensuring responses are accurate, relevant, and properly formatted
+        - Maintaining context and state across multi-turn conversations
+        - Handling errors and fallback scenarios gracefully
+        - Managing agent performance and resource allocation
+        """
+    
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Get the list of tools available to the master agent."""
+        return [
+            {
+                "name": "orchestrate_agents",
+                "description": "Orchestrate multiple agents to handle complex requests",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "request": {
+                            "type": "string",
+                            "description": "The user's request to be processed"
+                        },
+                        "preferred_agents": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of preferred agent types to handle this request"
+                        }
+                    },
+                    "required": ["request"]
+                }
+            },
+            {
+                "name": "get_agent_status",
+                "description": "Get status and metrics for all available agents",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "route_to_agent",
+                "description": "Route a request to a specific agent",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_type": {
+                            "type": "string",
+                            "enum": ["query", "action", "analytics", "compliance", "help", "scheduler"],
+                            "description": "Type of agent to route to"
+                        },
+                        "request": {
+                            "type": "string",
+                            "description": "The request to route to the agent"
+                        }
+                    },
+                    "required": ["agent_type", "request"]
+                }
+            }
+        ]
+    
     def __init__(self, llm_service: LLMService):
         """
         Initialize the master agent with LLM service and specialized agents.
@@ -75,9 +138,11 @@ class MasterAgent(BaseAgent):
             # Use LLM for intelligent orchestration
             orchestration_prompt = self._build_orchestration_prompt(request)
             
+            # Use model from request metadata if available, otherwise default to gpt-4
+            model = request.metadata.get("model", "gpt-4")
             llm_request = {
                 "messages": [{"role": "user", "content": orchestration_prompt}],
-                "model": "gpt-4",
+                "model": model,
                 "max_tokens": 500,
                 "temperature": 0.3
             }

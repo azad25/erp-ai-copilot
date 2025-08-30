@@ -116,12 +116,16 @@ class BaseAgent(ABC):
                 session_id=request.session_id
             )
 
+            # Get model from request metadata or use instance model
+            model = request.metadata.get("model", self.model)
+            
             # Validate model availability
             available_models = llm_service.get_available_models()
-            provider = llm_service.get_provider_for_model(self.model)
+            provider = llm_service.get_provider_for_model(model)
             if not provider:
                 raise AIModelError(
-                    f"Model {self.model} not available. "
+                    "unknown", model,
+                    f"Model {model} not available. "
                     f"Available models: {available_models}"
                 )
 
@@ -131,12 +135,16 @@ class BaseAgent(ABC):
             # Build conversation history
             messages = self._build_conversation_history(memory, request)
             
+            # Get temperature and max_tokens from metadata or use instance defaults
+            temperature = request.metadata.get("temperature", self.temperature)
+            max_tokens = request.metadata.get("max_tokens", self.max_tokens)
+            
             # Create LLM request
             llm_request = LLMRequest(
                 messages=messages,
-                model=self.model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 stream=False,
                 system_prompt=self.system_prompt
             )
@@ -190,11 +198,18 @@ class BaseAgent(ABC):
                 session_id=request.session_id
             )
 
+            # Get model from request metadata or use instance model
+            model = request.metadata.get("model", self.model)
+            
             # Validate model availability
-            provider = llm_service.get_provider_for_model(self.model)
+            provider = llm_service.get_provider_for_model(model)
             if not provider:
-                raise AIModelError(f"Model {self.model} not available")
+                raise AIModelError("unknown", model, f"Model {model} not available")
 
+            # Get temperature and max_tokens from metadata or use instance defaults
+            temperature = request.metadata.get("temperature", self.temperature)
+            max_tokens = request.metadata.get("max_tokens", self.max_tokens)
+            
             # Get or create memory for session
             memory = self._get_or_create_memory(request.session_id)
             
@@ -204,9 +219,9 @@ class BaseAgent(ABC):
             # Create LLM request
             llm_request = LLMRequest(
                 messages=messages,
-                model=self.model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 stream=True,
                 system_prompt=self.system_prompt
             )

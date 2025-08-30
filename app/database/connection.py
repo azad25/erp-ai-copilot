@@ -5,6 +5,7 @@ import asyncio
 from typing import AsyncGenerator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.pool import NullPool
+from sqlalchemy import text
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis.asyncio import Redis, ConnectionPool
 from qdrant_client import AsyncQdrantClient
@@ -92,7 +93,7 @@ class DatabaseManager:
             
             # Test connection
             async with self.postgres_engine.begin() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute(text("SELECT 1"))
             
             logger.info("PostgreSQL connection initialized successfully")
             
@@ -244,7 +245,7 @@ class DatabaseManager:
         try:
             if self.postgres_engine:
                 async with self.postgres_engine.begin() as conn:
-                    await conn.execute("SELECT 1")
+                    await conn.execute(text("SELECT 1"))
                 health_status["postgres"]["status"] = "healthy"
             else:
                 health_status["postgres"]["status"] = "not_initialized"

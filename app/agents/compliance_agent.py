@@ -42,16 +42,132 @@ class ComplianceAgent(BaseAgent):
     
     Capabilities:
     - GDPR compliance and data privacy
-    - SOX compliance and financial regulations
-    - HIPAA healthcare data protection
-    - PCI DSS payment card security
-    - ISO 27001 information security
-    - Data retention and deletion policies
-    - Access control and user permissions
-    - Audit trail generation and monitoring
-    - Policy enforcement and violation detection
-    - Risk assessment and compliance reporting
     """
+    
+    def _get_default_system_prompt(self) -> str:
+        """Get the default system prompt for the compliance agent."""
+        return """
+        You are a Compliance Agent specialized in regulatory compliance and policy enforcement for the ERP system.
+        Your responsibilities include:
+        - Ensuring compliance with regulations like GDPR, SOX, HIPAA, PCI DSS, and ISO 27001
+        - Managing data privacy and protection requirements
+        - Enforcing access control and user permissions
+        - Implementing and monitoring data retention policies
+        - Conducting compliance audits and generating reports
+        - Providing guidance on regulatory requirements
+        - Identifying and mitigating compliance risks
+        """
+    
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Get the list of tools available to the compliance agent."""
+        return [
+            {
+                "name": "check_compliance",
+                "description": "Check if data or operations comply with specific regulations",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "regulation": {
+                            "type": "string",
+                            "enum": ["gdpr", "sox", "hipaa", "pci_dss", "iso_27001", "financial", "data_retention"],
+                            "description": "The regulation to check against"
+                        },
+                        "data_type": {
+                            "type": "string",
+                            "description": "Type of data being processed"
+                        },
+                        "operation": {
+                            "type": "string",
+                            "description": "Operation being performed on the data"
+                        }
+                    },
+                    "required": ["regulation", "data_type", "operation"]
+                }
+            },
+            {
+                "name": "generate_audit_report",
+                "description": "Generate a compliance audit report",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "audit_type": {
+                            "type": "string",
+                            "enum": ["gdpr", "sox", "hipaa", "pci_dss", "iso_27001", "custom"],
+                            "description": "Type of compliance audit"
+                        },
+                        "scope": {
+                            "type": "object",
+                            "properties": {
+                                "departments": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Departments to include in the audit"
+                                },
+                                "time_period": {
+                                    "type": "object",
+                                    "properties": {
+                                        "start_date": {"type": "string", "format": "date"},
+                                        "end_date": {"type": "string", "format": "date"}
+                                    },
+                                    "description": "Time period for the audit"
+                                }
+                            },
+                            "description": "Scope of the audit"
+                        },
+                        "detail_level": {
+                            "type": "string",
+                            "enum": ["basic", "detailed", "comprehensive"],
+                            "default": "detailed",
+                            "description": "Level of detail in the audit report"
+                        }
+                    },
+                    "required": ["audit_type", "scope"]
+                }
+            },
+            {
+                "name": "check_data_retention",
+                "description": "Check data retention policies for specific data types",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "data_type": {
+                            "type": "string",
+                            "description": "Type of data to check retention for"
+                        },
+                        "regulation": {
+                            "type": "string",
+                            "enum": ["gdpr", "sox", "hipaa", "pci_dss", "custom"],
+                            "description": "Relevant regulation for retention policy"
+                        }
+                    },
+                    "required": ["data_type"]
+                }
+            },
+            {
+                "name": "assess_risk",
+                "description": "Assess compliance risk for a specific process or data handling",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "process_name": {
+                            "type": "string",
+                            "description": "Name of the process to assess"
+                        },
+                        "data_involved": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Types of data involved in the process"
+                        },
+                        "regulations": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Relevant regulations to consider"
+                        }
+                    },
+                    "required": ["process_name", "data_involved"]
+                }
+            }
+        ]
 
     def __init__(self, model: str = "gpt-4"):
         super().__init__(AgentType.COMPLIANCE, model)

@@ -15,6 +15,16 @@ class MessageRole(str, Enum):
     SYSTEM = "system"
 
 
+class MessageType(str, Enum):
+    """Message type enumeration."""
+    TEXT = "text"
+    IMAGE = "image"
+    FILE = "file"
+    COMMAND = "command"
+    SYSTEM = "system"
+    ERROR = "error"
+
+
 class AgentType(str, Enum):
     """Agent type enumeration."""
     QUERY = "query"
@@ -61,6 +71,18 @@ class ChatMessage(BaseModel):
     role: MessageRole
     content: str
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class MessageResponse(ChatMessage):
+    """Message response model with additional metadata."""
+    
+    id: UUID
+    conversation_id: UUID
+    model_used: Optional[str] = None
+    tokens_used: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
@@ -125,10 +147,26 @@ class UpdateConversationRequest(BaseModel):
     status: Optional[ConversationStatus] = None
 
 
+class ConversationResponse(BaseModel):
+    """Conversation response model."""
+    
+    id: UUID
+    organization_id: UUID
+    user_id: UUID
+    title: str
+    status: ConversationStatus
+    context: Dict[str, Any]
+    metadata: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    message_count: Optional[int] = 0
+    last_message_at: Optional[datetime] = None
+
+
 class ConversationListResponse(BaseModel):
     """Conversation list response model."""
     
-    conversations: List[Dict[str, Any]]
+    conversations: List[ConversationResponse]
     total: int
     page: int
     size: int
@@ -171,8 +209,8 @@ class CreateKnowledgeRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     content: str = Field(..., min_length=1)
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    access_level: str = Field(default="all", regex="^(all|hr_only|manager_only|admin_only)$")
-    version: str = Field(default="1.0", regex="^\\d+\\.\\d+$")
+    access_level: str = Field(default="all", pattern="^(all|hr_only|manager_only|admin_only)$")
+    version: str = Field(default="1.0", pattern="^\\d+\\.\\d+$")
 
 
 class UpdateKnowledgeRequest(BaseModel):
@@ -181,8 +219,8 @@ class UpdateKnowledgeRequest(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=500)
     content: Optional[str] = Field(None, min_length=1)
     metadata: Optional[Dict[str, Any]] = None
-    access_level: Optional[str] = Field(None, regex="^(all|hr_only|manager_only|admin_only)$")
-    version: Optional[str] = Field(None, regex="^\\d+\\.\\d+$")
+    access_level: Optional[str] = Field(None, pattern="^(all|hr_only|manager_only|admin_only)$")
+    version: Optional[str] = Field(None, pattern="^\\d+\\.\\d+$")
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -285,8 +323,8 @@ class RAGDocumentRequest(BaseModel):
     content: str = Field(..., min_length=1)
     document_type: str = Field(..., min_length=1, max_length=50)
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    access_level: str = Field(default="all", regex="^(all|hr_only|manager_only|admin_only)$")
-    version: str = Field(default="1.0", regex="^\\d+\\.\\d+$")
+    access_level: str = Field(default="all", pattern="^(all|hr_only|manager_only|admin_only)$")
+    version: str = Field(default="1.0", pattern="^\\d+\\.\\d+$")
     chunk_size: Optional[int] = Field(default=1000, ge=100, le=5000)
     chunk_overlap: Optional[int] = Field(default=200, ge=0, le=1000)
 
@@ -392,7 +430,7 @@ class ConversationAnalyticsRequest(BaseModel):
     end_date: Optional[datetime] = None
     user_id: Optional[UUID] = None
     agent_type: Optional[AgentType] = None
-    group_by: Optional[str] = Field(default="day", regex="^(hour|day|week|month)$")
+    group_by: Optional[str] = Field(default="day", pattern="^(hour|day|week|month)$")
 
 
 class ConversationAnalyticsResponse(BaseModel):
@@ -408,7 +446,7 @@ class ConversationAnalyticsResponse(BaseModel):
 class BulkOperationRequest(BaseModel):
     """Bulk operation request model."""
     
-    operation: str = Field(..., regex="^(create|update|delete|query)$")
+    operation: str = Field(..., pattern="^(create|update|delete|query)$")
     items: List[Dict[str, Any]] = Field(..., min_items=1, max_items=1000)
     options: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
@@ -430,7 +468,7 @@ class SearchFilter(BaseModel):
     """Search filter model."""
     
     field: str
-    operator: str = Field(..., regex="^(eq|ne|gt|gte|lt|lte|in|nin|contains|regex)$")
+    operator: str = Field(..., pattern="^(eq|ne|gt|gte|lt|lte|in|nin|contains|regex)$")
     value: Any
     case_sensitive: bool = False
 

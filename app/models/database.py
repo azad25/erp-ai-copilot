@@ -74,7 +74,7 @@ class Conversation(Base):
     user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     context: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(50), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -103,7 +103,7 @@ class Message(Base):
     user_id: Mapped[Optional[UUID]] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     model_used: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -161,7 +161,7 @@ class KnowledgeBase(Base):
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     embedding_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     vector_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     access_level: Mapped[str] = mapped_column(String(50), default="all")
@@ -279,7 +279,7 @@ class ConversationResponse(BaseModel):
     user_id: UUID
     title: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata_json: Dict[str, Any] = Field(default_factory=dict)
     status: str
     created_at: datetime
     updated_at: datetime
@@ -296,7 +296,7 @@ class MessageResponse(BaseModel):
     user_id: Optional[UUID] = None
     role: str
     content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata_json: Dict[str, Any] = Field(default_factory=dict)
     tokens_used: int = 0
     model_used: Optional[str] = None
     created_at: datetime
@@ -333,7 +333,7 @@ class KnowledgeBaseResponse(BaseModel):
     document_type: str
     title: str
     content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata_json: Dict[str, Any] = Field(default_factory=dict)
     embedding_id: Optional[str] = None
     vector_id: Optional[str] = None
     access_level: str

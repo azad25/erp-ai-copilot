@@ -8,6 +8,7 @@ The ERP AI Copilot now supports multiple LLM providers:
 - **Ollama**: Local model inference (recommended for development)
 - **OpenAI**: GPT-3.5, GPT-4, and GPT-4-turbo
 - **Anthropic**: Claude-3 models (Haiku, Sonnet, Opus)
+- **Gemini**: State-of-the-art LLM by Google
 
 ## Architecture
 
@@ -59,6 +60,13 @@ DEFAULT_LLM_PROVIDER=openai
 # Add to .env
 ANTHROPIC_API_KEY=your_api_key_here
 DEFAULT_LLM_PROVIDER=anthropic
+```
+
+#### Option 4: Gemini (Cloud)
+```bash
+# Add to .env
+GEMINI_API_KEY=your_gemini_api_key
+DEFAULT_LLM_PROVIDER=gemini
 ```
 
 ### 2. Test Your Setup
@@ -133,6 +141,7 @@ async def streaming_example():
 | `OLLAMA_BASE_URL` | Ollama server URL | `http://localhost:11434` |
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `ANTHROPIC_API_KEY` | Anthropic API key | - |
+| `GEMINI_API_KEY` | Gemini API key | - |
 | `DEFAULT_LLM_PROVIDER` | Default provider | `ollama` |
 | `DEFAULT_MODEL` | Default model | `llama2` |
 
@@ -291,3 +300,22 @@ For issues or questions:
 2. Review logs with `LOG_LEVEL=DEBUG`
 3. Test with `examples/llm_usage_example.py`
 4. Check provider-specific documentation
+
+## Adding Gemini Integration
+
+### Overview
+Gemini is a state-of-the-art LLM provided by Google. It has been integrated into the ERP AI Copilot system to enhance multi-model capabilities.
+
+### Configuration
+1. Set the `GEMINI_API_KEY` environment variable with your Gemini API key.
+2. Update the `.env` file:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key
+   ```
+
+### Usage
+- The Gemini provider can be accessed through the `LLMService`.
+- Example:
+  ```python
+  response = await llm_service.generate("gemini", "Your prompt here")
+  ```

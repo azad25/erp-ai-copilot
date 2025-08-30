@@ -24,6 +24,7 @@ from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.core.metrics import setup_metrics
 from app.rag.service import RAGService
+from app.clients.auth_grpc import get_auth_service_client, close_auth_service_client
 
 # Configure structured logging
 structlog.configure(
@@ -85,6 +86,17 @@ async def lifespan(app: FastAPI):
                     raise
         else:
             logger.info("RAG engine disabled in settings")
+            
+        # Initialize gRPC clients
+        try:
+            # Initialize auth service client
+            auth_client = get_auth_service_client()
+            logger.info("gRPC clients initialized successfully")
+            app.state.auth_client = auth_client
+        except Exception as e:
+            logger.error("Failed to initialize gRPC clients", error=str(e))
+            if settings.service.debug:
+                raise
         
         yield
         
@@ -102,7 +114,11 @@ async def lifespan(app: FastAPI):
         
         # Close database connections
         await close_database()
-        logger.info("Service shutdown completed")
+        logger.info("Database connections closed")
+        
+        # Close gRPC clients
+        await close_auth_service_client()
+        logger.info("gRPC clients closed")
 
 
 # Create FastAPI application
@@ -115,6 +131,24 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.service.debug else None,
     lifespan=lifespan,
 )
+
+# Add startup event to start gRPC server if needed
+@app.on_event("startup")
+async def startup_event():
+    """Start additional services on application startup."""
+    if settings.service.mode in ["grpc", "both"]:
+        from app.api.grpc import start_grpc_server
+        await start_grpc_server()
+        logger.info("gRPC server started", port=settings.grpc.port)
+
+# Add shutdown event to clean up resources
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on application shutdown."""
+    if settings.service.mode in ["grpc", "both"]:
+        from app.api.grpc import stop_grpc_server
+        await stop_grpc_server()
+        logger.info("gRPC server stopped")
 
 # Add middleware
 app.add_middleware(

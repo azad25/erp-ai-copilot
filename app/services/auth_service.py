@@ -5,14 +5,17 @@ This module provides authentication and authorization functionality,
 including user retrieval from JWT tokens and dependency injection.
 """
 
+from typing import Dict, Any, Optional
+from datetime import datetime
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.models.database import User
-from app.core.config import get_settings
-from app.core.database import get_db_session
+from app.database.models.database import User
+from app.config.settings import get_settings
+from app.database.connection import get_db_session
+from app.clients.auth_grpc import get_auth_service_client
 
 settings = get_settings()
 security = HTTPBearer()
@@ -23,11 +26,11 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db_session)
 ) -> User:
     """
-    Get the current authenticated user from JWT token.
+    Get the current authenticated user from JWT token using gRPC auth service.
     
     Args:
         credentials: HTTP authorization credentials containing JWT token
-        db: Database session
+        db: Database session (kept for backward compatibility but not used)
         
     Returns:
         User: The authenticated user object
@@ -35,54 +38,42 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
-    try:
-        # Decode JWT token
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
-        )
-        
-        # Extract user ID from token
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            
-        # Query user from database
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            
-        return user
-        
-    except jwt.PyJWTError:
+    if not credentials or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail="Authentication token required",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Get user info from auth service via gRPC
+    auth_client = get_auth_service_client()
+    user_info = await auth_client.validate_token(credentials.credentials)
+    
+    if not user_info:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Create a minimal user object with required attributes
+    user = User(
+        id=user_info['user_id'],
+        email=user_info['email'],
+        organization_id=user_info.get('organization_id'),
+        is_active=True,  # If token is valid, user is considered active
+        is_verified=True,  # If token is valid, user is considered verified
+    )
+    
+    return user
 
 
-async def get_current_user_ws(
-    token: str,
-    db: AsyncSession = Depends(get_db_session)
-) -> User:
+async def get_current_user_ws(token: str) -> User:
     """
-    Get the current authenticated user from WebSocket token.
+    Get the current authenticated user from WebSocket token using gRPC auth service.
     
     Args:
         token: JWT token from WebSocket connection
-        db: Database session
         
     Returns:
         User: The authenticated user object
@@ -90,54 +81,68 @@ async def get_current_user_ws(
     Raises:
         HTTPException: If token is invalid or user not found
     """
-    try:
-        # Decode JWT token
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
-        )
-        
-        # Extract user ID from token
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid WebSocket token",
-            )
-            
-        # Query user from database
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-            )
-            
-        return user
-        
-    except jwt.PyJWTError:
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not token:
+        logger.warning("No token provided to get_current_user_ws")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid WebSocket token",
+            detail="Authentication token required",
         )
+    
+    logger.info(f"Validating token (first 10 chars): {token[:10]}...")
+    
+    try:
+        # Get user info from auth service via gRPC
+        logger.info("Getting auth service client...")
+        auth_client = get_auth_service_client()
+        logger.info("Calling validate_token on auth client...")
+        user_info = await auth_client.validate_token(token)
+        
+        if not user_info:
+            logger.warning("Token validation returned no user info")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication token (no user info)",
+            )
+            
+        logger.info(f"Token validation successful, user_id: {user_info.get('user_id')}")
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.error(f"Unexpected error in get_current_user_ws: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Authentication service error: {str(e)}"
+        )
+    
+    # Create a minimal user object with required attributes
+    user = User(
+        id=user_info['user_id'],
+        email=user_info['email'],
+        organization_id=user_info.get('organization_id'),
+        is_active=True,  # If token is valid, user is considered active
+        is_verified=True,  # If token is valid, user is considered verified
+    )
+    
+    return user
 
 
 async def get_optional_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db_session)
-) -> User | None:
+) -> Optional[User]:
     """
     Get the current authenticated user if token is provided, otherwise return None.
     
     Args:
         credentials: HTTP authorization credentials containing JWT token
-        db: Database session
+        db: Database session (kept for backward compatibility but not used)
         
     Returns:
-        User | None: The authenticated user object or None if no valid token
+        Optional[User]: The authenticated user object or None if no valid token
     """
     try:
         return await get_current_user(credentials, db)

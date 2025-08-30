@@ -114,16 +114,28 @@ async def websocket_chat(
     user = None
     
     try:
+        logger.info("New WebSocket connection attempt", connection_id=connection_id)
+        
         # Authenticate user
         if not token:
+            logger.warning("No token provided in WebSocket connection")
             await websocket.close(code=4001, reason="Authentication token required")
             return
+            
+        logger.info("Token received, attempting authentication...", 
+                  token_prefix=token[:10] + '...' if token else 'None')
         
         try:
             user = await get_current_user_ws(token)
+            logger.info("Authentication successful", 
+                       user_id=user.id if user else 'None',
+                       email=user.email if user and hasattr(user, 'email') else 'None')
         except Exception as e:
-            logger.warning("WebSocket authentication failed", error=str(e))
-            await websocket.close(code=4001, reason="Authentication failed")
+            logger.error("WebSocket authentication failed", 
+                        error=str(e), 
+                        error_type=type(e).__name__,
+                        exc_info=True)
+            await websocket.close(code=4001, reason=f"Authentication failed: {str(e)}")
             return
         
         # Connect to WebSocket

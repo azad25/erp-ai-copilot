@@ -27,6 +27,129 @@ class AnalyticsAgent(BaseAgent):
     - Predictive analytics
     - Data visualization recommendations
     """
+    
+    def _get_default_system_prompt(self) -> str:
+        """Get the default system prompt for the analytics agent."""
+        return """
+        You are an Analytics Agent specialized in data analysis and insights generation for the ERP system.
+        Your responsibilities include:
+        - Performing statistical analysis on business data
+        - Identifying trends and patterns in historical data
+        - Generating forecasts and predictive models
+        - Creating business intelligence reports
+        - Calculating and monitoring KPIs
+        - Recommending data visualizations
+        - Providing data-driven recommendations
+        """
+    
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Get the list of tools available to the analytics agent."""
+        return [
+            {
+                "name": "analyze_trends",
+                "description": "Analyze trends in data over time",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "dataset": {
+                            "type": "string",
+                            "description": "The dataset to analyze"
+                        },
+                        "time_period": {
+                            "type": "string",
+                            "enum": ["day", "week", "month", "quarter", "year"],
+                            "description": "Time period for trend analysis"
+                        },
+                        "metrics": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Metrics to analyze"
+                        }
+                    },
+                    "required": ["dataset", "metrics"]
+                }
+            },
+            {
+                "name": "generate_forecast",
+                "description": "Generate forecasts based on historical data",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "dataset": {
+                            "type": "string",
+                            "description": "The dataset to forecast"
+                        },
+                        "target_metric": {
+                            "type": "string",
+                            "description": "The metric to forecast"
+                        },
+                        "forecast_periods": {
+                            "type": "integer",
+                            "description": "Number of periods to forecast"
+                        },
+                        "confidence_level": {
+                            "type": "number",
+                            "minimum": 0.5,
+                            "maximum": 0.99,
+                            "default": 0.95,
+                            "description": "Confidence level for prediction intervals"
+                        }
+                    },
+                    "required": ["dataset", "target_metric", "forecast_periods"]
+                }
+            },
+            {
+                "name": "calculate_kpi",
+                "description": "Calculate key performance indicators",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "kpi_name": {
+                            "type": "string",
+                            "description": "Name of the KPI to calculate"
+                        },
+                        "parameters": {
+                            "type": "object",
+                            "description": "Parameters required for KPI calculation"
+                        },
+                        "time_range": {
+                            "type": "object",
+                            "properties": {
+                                "start_date": {"type": "string", "format": "date"},
+                                "end_date": {"type": "string", "format": "date"}
+                            },
+                            "description": "Time range for KPI calculation"
+                        }
+                    },
+                    "required": ["kpi_name"]
+                }
+            },
+            {
+                "name": "generate_report",
+                "description": "Generate an analytics report",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "report_type": {
+                            "type": "string",
+                            "enum": ["executive", "detailed", "technical", "custom"],
+                            "description": "Type of report to generate"
+                        },
+                        "sections": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Sections to include in the report"
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "html", "pdf", "ppt"],
+                            "description": "Output format for the report"
+                        }
+                    },
+                    "required": ["report_type"]
+                }
+            }
+        ]
 
     def __init__(self, model: str = "gpt-4"):
         super().__init__(AgentType.ANALYTICS, model)

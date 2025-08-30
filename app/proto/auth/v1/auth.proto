@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package auth.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Auth service definition
+service AuthService {
+  // Token validation
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  
+  // User operations
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  
+  // Permission check
+  rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Token validation
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string organization_id = 3;
+  string email = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  string error = 6;
+}
+
+// User retrieval
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+  string error = 2;
+}
+
+// Permission check
+message CheckPermissionRequest {
+  string user_id = 1;
+  string resource = 2;
+  string action = 3;
+}
+
+message CheckPermissionResponse {
+  bool has_permission = 1;
+  string error = 2;
+}
+
+// Health check
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+  string service = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// Data models
+message User {
+  string id = 1;
+  string organization_id = 2;
+  string email = 3;
+  string first_name = 4;
+  string last_name = 5;
+  bool is_active = 6;
+  bool is_verified = 7;
+  google.protobuf.Timestamp last_login_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  Organization organization = 11;
+}
+
+message Organization {
+  string id = 1;
+  string name = 2;
+  string domain = 3;
+  bool is_active = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  int32 user_count = 7;
+  int32 active_user_count = 8;
+}

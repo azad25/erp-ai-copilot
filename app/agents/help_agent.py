@@ -48,12 +48,103 @@ class HelpAgent(BaseAgent):
     - API documentation and examples
     - Best practices recommendations
     - System information and status
-    - Workflow guidance
-    - Integration assistance
-    - Security guidance
-    - Custom training content
-    - Interactive walkthroughs
     """
+    
+    def _get_default_system_prompt(self) -> str:
+        """Get the default system prompt for the help agent."""
+        return """
+        You are a Help Agent specialized in providing user assistance and documentation for the ERP system.
+        Your responsibilities include:
+        - Guiding users through system features and workflows
+        - Providing step-by-step tutorials and how-to guides
+        - Assisting with troubleshooting and error resolution
+        - Explaining API endpoints and usage examples
+        - Offering best practices and recommendations
+        - Answering system-related questions
+        - Providing context-sensitive help based on user roles and permissions
+        """
+    
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Get the list of tools available to the help agent."""
+        return [
+            {
+                "name": "show_feature_guide",
+                "description": "Display a guide for a specific feature",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "feature_name": {
+                            "type": "string",
+                            "description": "Name of the feature to get help with"
+                        },
+                        "user_level": {
+                            "type": "string",
+                            "enum": ["beginner", "intermediate", "advanced", "admin"],
+                            "description": "User's experience level"
+                        }
+                    },
+                    "required": ["feature_name"]
+                }
+            },
+            {
+                "name": "troubleshoot_issue",
+                "description": "Help troubleshoot a specific issue or error",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "error_message": {
+                            "type": "string",
+                            "description": "Error message or description of the issue"
+                        },
+                        "steps_taken": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Steps already taken to resolve the issue"
+                        }
+                    },
+                    "required": ["error_message"]
+                }
+            },
+            {
+                "name": "show_api_documentation",
+                "description": "Display API documentation for a specific endpoint",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "endpoint": {
+                            "type": "string",
+                            "description": "API endpoint path (e.g., /api/v1/users)"
+                        },
+                        "method": {
+                            "type": "string",
+                            "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+                            "description": "HTTP method"
+                        }
+                    },
+                    "required": ["endpoint"]
+                }
+            },
+            {
+                "name": "get_tutorial",
+                "description": "Get a step-by-step tutorial for a specific task",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_name": {
+                            "type": "string",
+                            "description": "Name of the task to learn about"
+                        },
+                        "user_level": {
+                            "type": "string",
+                            "enum": ["beginner", "intermediate", "advanced"],
+                            "default": "beginner",
+                            "description": "User's experience level"
+                        }
+                    },
+                    "required": ["task_name"]
+                }
+            }
+        ]
 
     def __init__(self, model: str = "gpt-4"):
         super().__init__(AgentType.HELP, model)

@@ -36,6 +36,18 @@ class AICopilotException(Exception):
         )
 
 
+class QueryError(AICopilotException):
+    """Query execution or parsing errors."""
+    
+    def __init__(self, query: str, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"Query error: {message}",
+            error_code="QUERY_ERROR",
+            details=details or {"query": query},
+            status_code=400
+        )
+
+
 class AuthenticationError(AICopilotException):
     """Authentication and authorization errors."""
     
@@ -154,6 +166,30 @@ class AgentError(AICopilotException):
             error_code="AGENT_ERROR",
             details=details or {"agent_type": agent_type, "action": action},
             status_code=500
+        )
+
+
+class OrchestrationError(AICopilotException):
+    """Agent orchestration and coordination errors."""
+    
+    def __init__(self, workflow: str, step: str, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"Orchestration failed in {workflow} at step {step}: {message}",
+            error_code="ORCHESTRATION_ERROR",
+            details=details or {"workflow": workflow, "step": step},
+            status_code=500
+        )
+
+
+class ChatError(AICopilotException):
+    """Chat operation errors."""
+    
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None, status_code: int = 400):
+        super().__init__(
+            message=f"Chat error: {message}",
+            error_code="CHAT_ERROR",
+            details=details or {},
+            status_code=status_code
         )
 
 

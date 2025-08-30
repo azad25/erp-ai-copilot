@@ -24,6 +24,7 @@ from app.rag.models import (
 )
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.vector_store import VectorStore
+from app.rag.llm_service import LLMService
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -32,13 +33,15 @@ settings = get_settings()
 class RAGEngine:
     """RAG Engine for document processing and retrieval."""
     
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, llm_service: LLMService):
         """Initialize the RAG engine.
         
         Args:
             db_manager: Database connection manager
+            llm_service: LLM service for interacting with language models
         """
         self.db_manager = db_manager
+        self.llm_service = llm_service
         self.vector_store = VectorStore(db_manager)
         self.embedding_provider = EmbeddingProvider()
         self.collection_prefix = settings.rag.collection_prefix
@@ -218,6 +221,10 @@ class RAGEngine:
                 error=str(e)
             )
             raise
+    
+    async def query_gemini(self, prompt: str) -> str:
+        """Query the Gemini LLM provider."""
+        return await self.llm_service.generate("gemini", prompt)
     
     def _chunk_document(self, document: Document) -> List[DocumentChunk]:
         """Split document into chunks for processing.

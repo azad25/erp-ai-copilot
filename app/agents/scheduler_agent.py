@@ -48,6 +48,139 @@ class SchedulerAgent(BaseAgent):
     - Batch processing
     - Event-driven automation
     """
+    
+    def _get_default_system_prompt(self) -> str:
+        """Get the default system prompt for the scheduler agent."""
+        return """
+        You are a Scheduler Agent specialized in task scheduling and workflow automation for the ERP system.
+        Your responsibilities include:
+        - Creating and managing scheduled tasks and workflows
+        - Optimizing task execution and resource allocation
+        - Handling task dependencies and execution order
+        - Monitoring task execution and sending alerts
+        - Automating repetitive processes
+        - Managing batch processing jobs
+        - Coordinating event-driven automations
+        """
+    
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Get the list of tools available to the scheduler agent."""
+        return [
+            {
+                "name": "schedule_task",
+                "description": "Schedule a new task for execution",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_name": {
+                            "type": "string",
+                            "description": "Name of the task to schedule"
+                        },
+                        "schedule_type": {
+                            "type": "string",
+                            "enum": ["cron", "interval", "datetime", "recurring", "once"],
+                            "description": "Type of schedule for the task"
+                        },
+                        "schedule_config": {
+                            "type": "object",
+                            "description": "Configuration for the schedule (depends on schedule_type)",
+                            "properties": {
+                                "cron_expression": {
+                                    "type": "string",
+                                    "description": "Cron expression for cron schedule type"
+                                },
+                                "interval_seconds": {
+                                    "type": "integer",
+                                    "description": "Interval in seconds for interval schedule type"
+                                },
+                                "run_at": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "Specific datetime to run the task (ISO 8601 format)"
+                                },
+                                "recurrence_rule": {
+                                    "type": "object",
+                                    "description": "Recurrence rule for recurring tasks"
+                                }
+                            },
+                            "required": []
+                        },
+                        "task_parameters": {
+                            "type": "object",
+                            "description": "Parameters to pass to the task"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high", "critical"],
+                            "default": "medium",
+                            "description": "Priority of the task"
+                        }
+                    },
+                    "required": ["task_name", "schedule_type"]
+                }
+            },
+            {
+                "name": "list_scheduled_tasks",
+                "description": "List all scheduled tasks",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "running", "completed", "failed", "all"],
+                            "default": "all",
+                            "description": "Filter tasks by status"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100,
+                            "default": 20,
+                            "description": "Maximum number of tasks to return"
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "default": 0,
+                            "description": "Number of tasks to skip"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "cancel_task",
+                "description": "Cancel a scheduled task",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "ID of the task to cancel"
+                        },
+                        "force": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Whether to force cancel a running task"
+                        }
+                    },
+                    "required": ["task_id"]
+                }
+            },
+            {
+                "name": "get_task_status",
+                "description": "Get the status of a scheduled task",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "ID of the task to check"
+                        }
+                    },
+                    "required": ["task_id"]
+                }
+            }
+        ]
 
     def __init__(self, model: str = "gpt-4"):
         super().__init__(AgentType.SCHEDULER, model)
@@ -424,28 +557,28 @@ class SchedulerAgent(BaseAgent):
         **Total Active Schedules**: {len(schedules)}
         
         **Daily Schedules**:
-        {chr(10).join([f"- **{s['name']}** ({s['id']})",
-                      f"  Schedule: {s['type']} at {s['time']}",
-                      f"  Status: {s['status']} | Success Rate: {s['success_rate']}",
-                      f"  Next Run: {s['next_run']}",
-                      f"  Last Run: {s['last_run']}",
-                      ""] for s in schedules if s['type'] == 'daily'])}
+        {chr(10).join([f'- **{s["name"]}** ({s["id"]})',
+                      f'  Schedule: {s["type"]} at {s["time"]}',
+                      f'  Status: {s["status"]} | Success Rate: {s["success_rate"]}',
+                      f'  Next Run: {s["next_run"]}',
+                      f'  Last Run: {s["last_run"]}',
+                      ''] for s in schedules if s['type'] == 'daily')}
         
         **Weekly Schedules**:
-        {chr(10).join([f"- **{s['name']}** ({s['id']})",
-                      f"  Schedule: {s['type']} at {s['time']}",
-                      f"  Status: {s['status']} | Success Rate: {s['success_rate']}",
-                      f"  Next Run: {s['next_run']}",
-                      f"  Last Run: {s['last_run']}",
-                      ""] for s in schedules if s['type'] == 'weekly'])}
+        {chr(10).join([f'- **{s["name"]}** ({s["id"]})',
+                      f'  Schedule: {s["type"]} at {s["time"]}',
+                      f'  Status: {s["status"]} | Success Rate: {s["success_rate"]}',
+                      f'  Next Run: {s["next_run"]}',
+                      f'  Last Run: {s["last_run"]}',
+                      ''] for s in schedules if s['type'] == 'weekly')}
         
         **Monthly Schedules**:
-        {chr(10).join([f"- **{s['name']}** ({s['id']})",
-                      f"  Schedule: {s['type']} at {s['time']}",
-                      f"  Status: {s['status']} | Success Rate: {s['success_rate']}",
-                      f"  Next Run: {s['next_run']}",
-                      f"  Last Run: {s['last_run']}",
-                      ""] for s in schedules if s['type'] == 'monthly'])}
+        {chr(10).join([f'- **{s["name"]}** ({s["id"]})',
+                      f'  Schedule: {s["type"]} at {s["time"]}',
+                      f'  Status: {s["status"]} | Success Rate: {s["success_rate"]}',
+                      f'  Next Run: {s["next_run"]}',
+                      f'  Last Run: {s["last_run"]}',
+                      ''] for s in schedules if s['type'] == 'monthly')}
         
         **Overall System Health**:
         - **Average Success Rate**: 98.5%
