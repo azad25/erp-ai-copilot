@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from auth.v1 import auth_pb2 as auth_dot_v1_dot_auth__pb2
+from . import auth_pb2 as auth_dot_v1_dot_auth__pb2
 
 GRPC_GENERATED_VERSION = '1.74.0'
 GRPC_VERSION = grpc.__version__

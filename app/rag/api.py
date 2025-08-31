@@ -61,6 +61,16 @@ class SearchResponse(BaseModel):
     processing_time_ms: float
 
 
+class DocumentUpdateRequest(BaseModel):
+    """Document update request model."""
+    title: Optional[str] = None
+    content: Optional[str] = None
+    document_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    version: Optional[str] = None
+    access_level: Optional[str] = None
+
+
 # API Endpoints
 @router.post("/documents", response_model=DocumentIngestionResponse)
 async def ingest_document(

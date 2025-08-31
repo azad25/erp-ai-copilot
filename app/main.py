@@ -17,9 +17,8 @@ from app.config.settings import get_settings
 from app.database.connection import init_database, close_database, check_database_health, get_db_manager
 from app.services.kafka_service import kafka_service
 from app.api.v1.router import api_router
-from app.api.websocket import websocket_router
+from app.api.websocket import router as websocket_router
 from app.api.grpc import grpc_router
-from app.middleware.auth import AuthMiddleware
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.core.metrics import setup_metrics
@@ -153,7 +152,10 @@ async def shutdown_event():
 # Add middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.security.cors_origins,
+    # settings.security.cors_origins may be a comma-separated string in env;
+    # include the API gateway URL as an allowed origin so proxied WebSocket
+    # handshakes from the gateway aren't rejected. Dedupe the list.
+    allow_origins=list({*settings.security.cors_origins_list, settings.api_gateway.url}),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -162,7 +164,6 @@ app.add_middleware(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
-app.add_middleware(AuthMiddleware)
 
 # Include routers
 app.include_router(api_router, prefix="/api/v1")

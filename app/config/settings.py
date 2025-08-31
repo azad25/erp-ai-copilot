@@ -292,6 +292,11 @@ class Settings(BaseSettings):
     auth_service: AuthServiceSettings = AuthServiceSettings()
     api_gateway: APIGatewaySettings = APIGatewaySettings()
     
+    @property
+    def AUTH_SERVICE_GRPC_URL(self) -> str:
+        """Get Auth Service gRPC URL for backward compatibility."""
+        return self.auth_service.address
+    
     # AI and RAG
     ai: AISettings = AISettings()
     rag: RAGSettings = RAGSettings()

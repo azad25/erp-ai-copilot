@@ -42,7 +42,13 @@ class RAGService:
         self.document_processor = DocumentProcessor()
         self.vector_store = VectorStore(db_manager)
         self.embedding_provider = get_embedding_provider(settings.rag.embedding_model)
-        self.engine = RAGEngine(db_manager, self.vector_store, self.embedding_provider)
+        # Create LLM service wrapper for RAG
+        from app.rag.llm_service import LLMService as RAGLLMService
+        from app.services.llm_service import get_llm_service
+        base_llm = get_llm_service()
+        rag_llm_service = RAGLLMService(base_llm)
+        
+        self.engine = RAGEngine(db_manager, rag_llm_service)
         
         # Initialize cache
         self.document_cache = CacheManager(db_manager, Document, prefix="rag:doc")

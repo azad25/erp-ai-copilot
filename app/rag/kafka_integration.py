@@ -39,7 +39,7 @@ class KafkaManager:
     
     def __init__(self):
         """Initialize the Kafka manager."""
-        self.bootstrap_servers = settings.kafka.bootstrap_servers
+        self.bootstrap_servers = settings.kafka.brokers_list
         self.producer = None
         self.consumers = {}
         self.handlers = {}

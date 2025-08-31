@@ -73,15 +73,19 @@ class DatabaseManager:
             # Convert PostgreSQL URL to async format
             async_url = settings.database.url.replace("postgresql://", "postgresql+asyncpg://")
             
-            self.postgres_engine = create_async_engine(
-                async_url,
-                echo=settings.service.debug,
-                poolclass=NullPool if settings.service.debug else None,
-                pool_size=settings.database.max_connections,
-                max_overflow=settings.database.max_connections * 2,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-            )
+            engine_kwargs = {
+                "echo": settings.service.debug,
+                "pool_pre_ping": True,
+                "pool_recycle": 3600,
+            }
+            
+            if settings.service.debug:
+                engine_kwargs["poolclass"] = NullPool
+            else:
+                engine_kwargs["pool_size"] = settings.database.max_connections
+                engine_kwargs["max_overflow"] = settings.database.max_connections * 2
+            
+            self.postgres_engine = create_async_engine(async_url, **engine_kwargs)
             
             self.postgres_session_factory = async_sessionmaker(
                 self.postgres_engine,
@@ -148,9 +152,11 @@ class DatabaseManager:
         """Initialize Qdrant connection."""
         try:
             self.qdrant_client = AsyncQdrantClient(
-                url=settings.qdrant.http_url,
+                host=settings.qdrant.host,
+                port=settings.qdrant.port,
                 api_key=settings.qdrant.api_key,
-                timeout=settings.qdrant.timeout,
+                https=False,  # Using HTTP for local development
+                timeout=30.0
             )
             
             # Test connection

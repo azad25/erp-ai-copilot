@@ -36,8 +36,8 @@ class VectorStore:
     async def initialize(self):
         """Initialize the vector store connection."""
         try:
-            # Get Qdrant client from database manager
-            self.client = await self.db_manager.get_qdrant_client()
+            # Get Qdrant client from database manager (synchronous call)
+            self.client = self.db_manager.get_qdrant_client()
             
             # Test connection
             collections = await self.client.get_collections()

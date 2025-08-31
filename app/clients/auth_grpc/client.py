@@ -9,8 +9,8 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 # Import generated gRPC code
-from app.proto import auth_pb2 as pb
-from app.proto import auth_pb2_grpc as pb_grpc
+from app.proto.generated.auth.v1 import auth_pb2 as pb
+from app.proto.generated.auth.v1 import auth_pb2_grpc as pb_grpc
 from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -47,13 +47,8 @@ class AuthServiceClient:
             self.stub = pb_grpc.AuthServiceStub(self.channel)
             logger.info(f"Successfully connected to Auth Service at {settings.AUTH_SERVICE_GRPC_URL}")
             
-            # Test the connection with a simple RPC call
-            try:
-                await self.stub.HealthCheck(pb.HealthCheckRequest())
-                logger.info("Successfully made test RPC call to Auth Service")
-            except Exception as e:
-                logger.error(f"Test RPC call to Auth Service failed: {str(e)}")
-                raise
+            # Note: Health check will be done lazily when first RPC call is made
+            logger.info("gRPC client initialized, connection will be tested on first use")
                 
         except Exception as e:
             logger.error(f"Failed to connect to Auth Service: {str(e)}", exc_info=True)

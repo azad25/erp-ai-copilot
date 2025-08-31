@@ -22,7 +22,7 @@ from app.services.auth_service import get_current_user
 from app.core.metrics import CHAT_REQUESTS, CHAT_RESPONSES, CHAT_ERRORS
 
 logger = structlog.get_logger(__name__)
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(tags=["chat"])
 
 
 @router.post("/", response_model=ChatResponse)

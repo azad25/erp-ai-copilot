@@ -346,8 +346,16 @@ class WebSocketMessage(BaseModel):
     
     type: str = Field(..., description="Message type")
     data: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: Optional[float] = None
     message_id: Optional[str] = None
+    
+    def model_dump(self, **kwargs):
+        """Override model_dump to handle datetime serialization."""
+        data = super().model_dump(**kwargs)
+        if self.timestamp is None:
+            import time
+            data['timestamp'] = time.time()
+        return data
 
 
 class WebSocketChatMessage(WebSocketMessage):

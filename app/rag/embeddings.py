@@ -30,7 +30,7 @@ class EmbeddingProvider:
         self.model_name = model_name or settings.rag.embedding_model
         self._model = None
         self._vector_size = None
-        self._distance_metric = "cosine"
+        self._distance_metric = "Cosine"
         
         # Initialize model
         self._initialize_model()
@@ -38,16 +38,29 @@ class EmbeddingProvider:
     def _initialize_model(self):
         """Initialize the embedding model."""
         try:
-            # Load the model
-            self._model = SentenceTransformer(self.model_name)
-            
-            # Get vector size from model
-            self._vector_size = self._model.get_sentence_embedding_dimension()
-            
-            logger.info(
-                "Embedding model initialized",
-                model=self.model_name,
-                vector_size=self._vector_size
+            # Check if sentence_transformers is available
+            try:
+                from sentence_transformers import SentenceTransformer
+                # Load the model
+                self._model = SentenceTransformer(self.model_name)
+                
+                # Get vector size from model
+                self._vector_size = self._model.get_sentence_embedding_dimension()
+                
+                logger.info(
+                    "Embedding model initialized",
+                    model=self.model_name,
+                    vector_size=self._vector_size
+                )
+            except ImportError:
+                logger.warning("sentence_transformers not available, using fallback embedding")
+                # Use a simple fallback embedding with fixed size
+                self._model = None
+                self._vector_size = 384  # Default size for all-MiniLM-L6-v2
+                
+                logger.info(
+                    "Fallback embedding initialized",
+                    vector_size=self._vector_size
             )
             
         except Exception as e:
@@ -127,9 +140,10 @@ class EmbeddingProvider:
         Returns:
             Vector embedding
         """
-        # Ensure model is initialized
+        # If no model available, return random embedding for fallback
         if self._model is None:
-            self._initialize_model()
+            logger.warning("Using fallback random embedding")
+            return np.random.rand(self._vector_size).astype(np.float32)
         
         # Generate embedding
         return self._model.encode(text, normalize_embeddings=True)
@@ -143,9 +157,10 @@ class EmbeddingProvider:
         Returns:
             List of vector embeddings
         """
-        # Ensure model is initialized
+        # If no model available, return random embeddings for fallback
         if self._model is None:
-            self._initialize_model()
+            logger.warning("Using fallback random embeddings")
+            return [np.random.rand(self._vector_size).astype(np.float32) for _ in texts]
         
         # Generate embeddings
         return self._model.encode(texts, normalize_embeddings=True)

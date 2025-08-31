@@ -1,69 +1,113 @@
 version: '3.8'
 
 services:
+  # AI Copilot Service - AI-powered ERP assistance with Ollama integration
   ai-copilot:
     build:
-      context: .
+      context: ../erp-ai-copilot
       dockerfile: Dockerfile
-    container_name: erp-ai-copilot
+    container_name: ${COMPOSE_PROJECT_NAME:-erp-suite}-ai-copilot
     ports:
       - "8003:8003"  # HTTP API
       - "50055:50055"  # gRPC
     environment:
-      # Database Configuration
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=erp_ai_copilot
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_SSL_MODE=disable
-      
-      # Redis Configuration
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=redispassword
-      - REDIS_DB=2
-      
-      # MongoDB Configuration
-      - MONGODB_URI=mongodb://root:password@mongodb:27017/
-      - MONGODB_DATABASE=erp_ai_conversations
-      
-      # Qdrant Configuration
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - QDRANT_GRPC_PORT=6334
-      
-      # Kafka Configuration
-      - KAFKA_BROKERS=kafka:29092
-      - KAFKA_TOPIC_PREFIX=ai-copilot
-      
-      # Auth Service Configuration
-      - AUTH_SERVICE_GRPC_HOST=erp-suite-auth-service
-      - AUTH_SERVICE_GRPC_PORT=50051
-      
-      # API Gateway Configuration
-      - API_GATEWAY_URL=http://api-gateway:8000
-      
-      # AI Model Configuration
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - OLLAMA_BASE_URL=http://ollama:11434
-      
       # Service Configuration
       - SERVICE_NAME=ai-copilot
       - SERVICE_VERSION=1.0.0
       - ENVIRONMENT=development
       - LOG_LEVEL=info
+      - HOST=0.0.0.0
+      - PORT=8003
+      
+      # Database Configuration
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=erp_ai_copilot
+      - DB_USER=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DB_SSL_MODE=disable
+      - DB_MAX_CONNECTIONS=20
+      - DB_MIN_CONNECTIONS=5
+      
+      # MongoDB Configuration
+      - MONGODB_URI=mongodb://${MONGODB_ROOT_USERNAME:-root}:${MONGODB_ROOT_PASSWORD:-password}@mongodb:27017/
+      - MONGODB_DATABASE=erp_ai_conversations
+      - MONGODB_MAX_POOL_SIZE=10
+      - MONGODB_MIN_POOL_SIZE=1
+      
+      # Redis Configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispassword}
+      - REDIS_DB=0
+      - REDIS_POOL_SIZE=10
+      
+      # Qdrant Configuration
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_GRPC_PORT=6334
+      - QDRANT_API_KEY=
+      - QDRANT_TIMEOUT=30
+      
+      # Kafka Configuration
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_TOPIC_PREFIX=ai-copilot
+      - KAFKA_CLIENT_ID=ai-copilot-service
+      - KAFKA_GROUP_ID=ai-copilot-group
+      - KAFKA_AUTO_OFFSET_RESET=earliest
+      
+      # AI Model Configuration
+      - OLLAMA_BASE_URL=http://172.17.0.1:11434
+      - DEFAULT_LLM_PROVIDER=gemini
+      - DEFAULT_MODEL=gemini2.0:flash
+      - GEMINI_API_KEY=AIzaSyDe79kNlJ_lGUXO5e-qka73mUpcvrynsBc
+      - DEFAULT_MODEL=gemini2.0:flash
+      - AI_DEFAULT_MODEL=gemini2.0:flash
+      - AI_MAX_TOKENS=4000
+      - AI_TEMPERATURE=0.7
+
+      # Auth Service Configuration
+      - AUTH_SERVICE_GRPC_HOST=erp-suite-auth-service
+      - AUTH_SERVICE_GRPC_PORT=50051
+      
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8003
+      - GRPC_PORT=50055
+      
+      # CORS Configuration
+      - CORS_ORIGINS=http://localhost:3000,http://erp-frontend:3000,http://localhost:8003,http://localhost,http://localhost:8000
+      - SECURITY_CORS_ORIGINS=http://localhost:3000,http://erp-frontend:3000,http://localhost:8003,http://localhost
       
       # Security
       - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
-      - CORS_ORIGINS=http://localhost:3000,http://erp-frontend:3000
+      - SECURITY_JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      - SECURITY_JWT_ALGORITHM=HS256
+      - SECURITY_JWT_EXPIRY_HOURS=24
       
       # Resource Limits
       - MAX_CONCURRENT_REQUESTS=100
       - REQUEST_TIMEOUT=300
       - MEMORY_LIMIT_MB=2048
+      
+      # Agent Configuration
+      - AGENT_TIMEOUT_SECONDS=60
+      - AGENT_MAX_RETRIES=3
+      - AGENT_MEMORY_TTL_HOURS=24
+      - AGENT_MAX_CONCURRENT=10
+      
+      # WebSocket Configuration
+      - WS_MAX_CONNECTIONS=1000
+      - WS_HEARTBEAT_INTERVAL=30
+      - WS_CONNECTION_TIMEOUT=300
+      - WS_MAX_MESSAGE_SIZE=1048576
+      
+      # gRPC Configuration
+      - GRPC_MAX_WORKERS=10
+      - GRPC_MAX_CONCURRENT_RPCS=100
+      - GRPC_MAX_CONNECTION_IDLE=300
+      - GRPC_MAX_CONNECTION_AGE=600
+      - GRPC_MAX_MESSAGE_SIZE=52428800
       
       # RAG Configuration
       - RAG_ENABLED=true
@@ -71,127 +115,50 @@ services:
       - RAG_EMBEDDING_MODEL=all-MiniLM-L6-v2
       - RAG_SIMILARITY_THRESHOLD=0.75
       - RAG_MAX_RESULTS=10
-      
-      # Agent Configuration
-      - AGENT_TIMEOUT_SECONDS=60
-      - AGENT_MAX_RETRIES=3
-      - AGENT_MEMORY_TTL_HOURS=24
-      
-      # WebSocket Configuration
-      - WS_MAX_CONNECTIONS=1000
-      - WS_HEARTBEAT_INTERVAL=30
-      - WS_CONNECTION_TIMEOUT=300
-      
-      # gRPC Configuration
-      - GRPC_MAX_WORKERS=10
-      - GRPC_MAX_CONCURRENT_RPCS=100
+      - RAG_CHUNK_SIZE=1000
+      - RAG_CHUNK_OVERLAP=200
       
       # Monitoring
       - METRICS_ENABLED=true
       - HEALTH_CHECK_INTERVAL=30
-      - PROMETHEUS_PORT=9090
+      - MONITORING_METRICS_ENABLED=true
+      - MONITORING_HEALTH_CHECK_INTERVAL=30
+      - MONITORING_PROMETHEUS_PORT=9090
+      - MONITORING_LOG_LEVEL=info
+      - MONITORING_LOG_FORMAT=json
       
     volumes:
-      - ./app:/app/app
+      - ../erp-ai-copilot:/app
       - ./logs:/app/logs
       - ./data:/app/data
-      - ./models:/app/models
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      mongodb:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      kafka:
+        condition: service_started
     networks:
       - erp-network
-    depends_on:
-      - postgres
-      - redis
-      - mongodb
-      - qdrant
-      - kafka
-      - auth-service
-      - api-gateway
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 8G
           cpus: '1.0'
-        reservations:
-          memory: 1G
-          cpus: '0.5'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 300s
+      timeout: 100s
       retries: 3
       start_period: 60s
+    command: ["python", "cmd/server.py", "--mode", "full", "--provider", "GeminiProvider", "--host", "0.0.0.0", "--port", "8003"]
     profiles:
       - ai-services
       - full-stack
-
-  # Ollama for local AI models
-  ollama:
-    image: ollama/ollama:latest
-    container_name: erp-ollama
-    ports:
-      - "11434:11434"
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_ORIGINS=*
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - erp-network
-    profiles:
-      - ai-services
-      - full-stack
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: '2.0'
-        reservations:
-          memory: 2G
-          cpus: '1.0'
-
-  # Celery worker for background tasks
-  ai-copilot-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: erp-ai-copilot-worker
-    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=erp_ai_copilot
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=redispassword
-      - KAFKA_BROKERS=kafka:29092
-      - MONGODB_URI=mongodb://root:password@mongodb:27017/
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-    volumes:
-      - ./app:/app/app
-      - ./logs:/app/logs
-    networks:
-      - erp-network
-    depends_on:
-      - postgres
-      - redis
-      - mongodb
-      - qdrant
-      - kafka
-    profiles:
-      - ai-services
-      - full-stack
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '0.5'
-        reservations:
-          memory: 512M
-          cpus: '0.25'
-
 volumes:
   ollama_data:
 

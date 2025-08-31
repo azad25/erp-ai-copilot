@@ -10,12 +10,15 @@ Provides unified interface for interacting with various LLM providers:
 
 import os
 import asyncio
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, Optional, AsyncGenerator, ClassVar
 from abc import ABC, abstractmethod
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import httpx
 import json
+from pathlib import Path
+
+from app.utils.modelfile_loader import get_default_system_prompt
 
 # Import LLM provider libraries
 try:
@@ -51,7 +54,10 @@ class LLMRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 4000
     stream: bool = False
-    system_prompt: Optional[str] = None
+    system_prompt: Optional[str] = Field(
+        default=None,
+        description="System prompt to guide the model's behavior. If None, the default system prompt will be used."
+    )
 
 
 class LLMResponse(BaseModel):
@@ -330,8 +336,17 @@ class GeminiProvider:
         model_name = model_map.get(model, model)
         return f"{self.base_url}/{model_name}:generateContent"
 
-    async def generate_content(self, prompt: str, model: str = None) -> str:
-        """Generate content using Gemini API."""
+    async def generate_content(self, prompt: str, model: str = None, system_instruction: str = None) -> str:
+        """Generate content using Gemini API.
+        
+        Args:
+            prompt: The user's prompt/message
+            model: The model to use (defaults to the instance's default model)
+            system_instruction: Optional system instruction to guide the model's behavior
+            
+        Returns:
+            The generated text response
+        """
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required")
             
@@ -343,6 +358,7 @@ class GeminiProvider:
             "x-goog-api-key": self.api_key,
         }
         
+        # Prepare the request payload
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -352,6 +368,12 @@ class GeminiProvider:
                 "maxOutputTokens": 2048,
             }
         }
+        
+        # Add system instruction if provided
+        if system_instruction:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -377,10 +399,19 @@ class LLMService:
     - Future extensibility for other providers
     """
 
-    def __init__(self):
+    def __init__(self, default_system_prompt: Optional[str] = None):
+        """Initialize the LLM service.
+        
+        Args:
+            default_system_prompt: Optional default system prompt to use.
+                                 If None, will be loaded from the Modelfile.
+        """
         self.logger = structlog.get_logger("llm_service")
+        self.default_system_prompt = default_system_prompt or get_default_system_prompt()
         self.providers: Dict[str, BaseLLMProvider] = {}
         self._initialize_providers()
+        self.logger.info("LLM Service initialized with default system prompt", 
+                       prompt_length=len(self.default_system_prompt))
 
     def _initialize_providers(self):
         """Initialize all available LLM providers"""
@@ -469,7 +500,17 @@ class LLMService:
         return model_mapping.get(model)
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
-        """Generate response using the appropriate provider"""
+        """Generate response using the appropriate provider
+        
+        Args:
+            request: The LLM request containing messages and generation parameters
+            
+        Returns:
+            LLMResponse containing the generated content and metadata
+            
+        Raises:
+            AIModelError: If there's an error generating the response
+        """
         provider_name = self.get_provider_for_model(request.model)
         
         if not provider_name:
@@ -477,7 +518,12 @@ class LLMService:
             
         provider = self.providers.get(provider_name)
         if not provider:
-            raise AIModelError(provider_name, request.model, f"Provider {provider_name} not available for model {request.model}")
+            raise AIModelError(provider_name, request.model, 
+                            f"Provider {provider_name} not available for model {request.model}")
+        
+        # Use provided system prompt or fall back to default
+        if request.system_prompt is None:
+            request.system_prompt = self.default_system_prompt
 
         self.logger.info(
             "Generating LLM response",
@@ -493,21 +539,54 @@ class LLMService:
             elif provider_name == "anthropic":
                 return await self._generate_anthropic(provider, request)
             elif provider_name == "ollama":
-                return await self._generate_ollama(provider, request)
-            elif provider_name == "gemini":
-                # Combine all user messages into a single prompt
-                prompt = "\n".join(
-                    f"{m.role.upper()}: {m.content}" 
-                    for m in request.messages
+                # For Ollama, we'll format the messages with system prompt
+                messages = []
+                if request.system_prompt:
+                    messages.append({"role": "system", "content": request.system_prompt})
+                messages.extend([
+                    {"role": msg.role, "content": msg.content}
+                    for msg in request.messages
+                ])
+                
+                response = await provider.client.chat(
+                    model=request.model.split("/")[-1],  # Remove provider prefix
+                    messages=messages,
+                    options={
+                        "temperature": request.temperature,
+                        "num_predict": request.max_tokens
+                    }
                 )
+                
+                return LLMResponse(
+                    content=response["message"]["content"],
+                    model=request.model,
+                    tokens_used=response.get("eval_count", 0),
+                    finish_reason="stop",
+                    metadata={"provider": "ollama"}
+                )
+                
+            elif provider_name == "gemini":
+                # For Gemini, we'll use the system instruction field for the system prompt
+                # and combine user/assistant messages into the prompt
+                prompt = "\n".join(
+                    f"{m.role.upper()}: {m.content}"
+                    for m in request.messages
+                    if m.role in ["user", "assistant"]
+                )
+                
+                # Use the system prompt if provided, otherwise use the default
+                system_prompt = request.system_prompt or self.default_system_prompt
+                
                 response = await provider.generate_content(
                     prompt=prompt,
-                    model=request.model
+                    model=request.model,
+                    system_instruction=system_prompt
                 )
+                
                 return LLMResponse(
                     content=response,
                     model=request.model,
-                    tokens_used=len(response.split()),
+                    tokens_used=len(response.split()),  # Approximate token count
                     finish_reason="stop",
                     metadata={"provider": "gemini"}
                 )
@@ -553,3 +632,7 @@ class LLMService:
 
 # Global LLM service instance
 llm_service = LLMService()
+
+def get_llm_service() -> LLMService:
+    """Get the global LLM service instance."""
+    return llm_service
