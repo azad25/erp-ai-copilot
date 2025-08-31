@@ -1,6 +1,7 @@
 """
 WebSocket router for real-time chat functionality.
 """
+import asyncio
 import json
 import uuid
 import time
@@ -71,20 +72,50 @@ class ConnectionManager:
                            exc_info=True)
                 WS_ERRORS.labels(error_type="message_error").inc()
     
-    async def send_personal_json(self, data: dict, connection_id: str):
-        """Send JSON data to a specific connection."""
-        if connection_id in self.active_connections:
-            try:
-                await self.active_connections[connection_id].send_json(data)
-                WS_MESSAGES.labels(message_type="json").inc()
-            except WebSocketDisconnect:
-                logger.info("WebSocket disconnected", connection_id=connection_id)
-            except Exception as e:
-                logger.error("Error handling WebSocket message", 
-                           connection_id=connection_id, 
-                           error=str(e), 
-                           exc_info=True)
-                WS_ERRORS.labels(error_type="message_error").inc()
+    async def send_personal_json(self, data: dict, connection_id: str) -> bool:
+        """
+        Send JSON data to a specific connection.
+        
+        Args:
+            data: The data to send (will be converted to JSON)
+            connection_id: The ID of the connection to send to
+            
+        Returns:
+            bool: True if the message was sent successfully, False otherwise
+        """
+        if connection_id not in self.active_connections:
+            logger.debug("Connection not found", connection_id=connection_id)
+            return False
+            
+        try:
+            # Ensure data is JSON serializable
+            import json
+            json.dumps(data)  # Test serialization
+            
+            await self.active_connections[connection_id].send_json(data)
+            WS_MESSAGES.labels(message_type="json").inc()
+            return True
+            
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected during send", connection_id=connection_id)
+            self.disconnect(connection_id)
+            return False
+            
+        except (TypeError, ValueError) as e:
+            logger.error("JSON serialization error", 
+                       connection_id=connection_id, 
+                       error=str(e),
+                       data_type=type(data).__name__)
+            WS_ERRORS.labels(error_type="serialization").inc()
+            return False
+            
+        except Exception as e:
+            logger.error("Error sending WebSocket message", 
+                       connection_id=connection_id, 
+                       error=str(e), 
+                       exc_info=True)
+            WS_ERRORS.labels(error_type="send_error").inc()
+            return False
     
     async def broadcast_to_user(self, message: str, user_id: str):
         """Broadcast a message to all connections of a user."""
@@ -156,56 +187,116 @@ async def websocket_chat(
         # Handle incoming messages
         while True:
             try:
-                # Receive message
-                data = await websocket.receive_text()
-                message_data = json.loads(data)
-                
-                # Validate message format
-                if message_data.get("type") == "chat_message":
-                    await handle_chat_message(connection_id, user, message_data)
-                elif message_data.get("type") == "ping":
-                    # Handle ping for keep-alive
-                    pong_message = WebSocketStatusMessage(
-                        type="pong",
-                        status="ok",
-                        message="pong"
+                # Receive message with timeout to prevent hanging
+                try:
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=300)  # 5 minute timeout
+                except asyncio.TimeoutError:
+                    logger.info("WebSocket connection timed out", connection_id=connection_id)
+                    break
+                    
+                try:
+                    message_data = json.loads(data)
+                except json.JSONDecodeError as e:
+                    logger.warning("Invalid JSON received", 
+                                 connection_id=connection_id,
+                                 error=str(e))
+                    await manager.send_personal_json(
+                        WebSocketStatusMessage(
+                            type="error",
+                            status="error",
+                            message="Invalid JSON format"
+                        ).model_dump(), 
+                        connection_id
                     )
-                    await manager.send_personal_json(pong_message.model_dump(), connection_id)
+                    continue
+                
+                # Process valid message
+                try:
+                    message_type = message_data.get("type")
+                    if message_type == "chat_message":
+                        await handle_chat_message(connection_id, user, message_data)
+                    elif message_type == "ping":
+                        # Handle ping for keep-alive
+                        await manager.send_personal_json(
+                            WebSocketStatusMessage(
+                                type="pong",
+                                status="ok",
+                                message="pong"
+                            ).model_dump(),
+                            connection_id
+                        )
+                    else:
+                        # Unknown message type
+                        await manager.send_personal_json(
+                            WebSocketStatusMessage(
+                                type="error",
+                                status="error",
+                                message="Unknown message type",
+                                data={"received_type": message_type}
+                            ).model_dump(),
+                            connection_id
+                        )
+                except Exception as e:
+                    logger.error("Error processing message", 
+                               connection_id=connection_id, 
+                               error=str(e), 
+                               exc_info=True)
+                    WS_ERRORS.labels(error_type="processing").inc()
+                    
+                    # Try to send error message to client
+                    try:
+                        await manager.send_personal_json(
+                            WebSocketStatusMessage(
+                                type="error",
+                                status="error",
+                                message="Error processing message"
+                            ).model_dump(),
+                            connection_id
+                        )
+                    except Exception as send_error:
+                        logger.error("Failed to send error message to client",
+                                   connection_id=connection_id,
+                                   error=str(send_error))
+                        break  # Exit if we can't send error messages
+                
+            except WebSocketDisconnect:
+                logger.info("WebSocket disconnected normally", 
+                          connection_id=connection_id, 
+                          user_id=str(user.id) if user else None)
+                break
+                
+            except RuntimeError as e:
+                if "Cannot call" in str(e) and "disconnect" in str(e):
+                    logger.info("WebSocket disconnected (runtime)", 
+                              connection_id=connection_id,
+                              error=str(e))
                 else:
-                    # Unknown message type
-                    error_message = WebSocketStatusMessage(
-                        type="error",
-                        status="error",
-                        message="Unknown message type",
-                        data={"received_type": message_data.get("type")}
-                    )
-                    await manager.send_personal_json(error_message.model_dump(), connection_id)
-                
-            except json.JSONDecodeError:
-                error_message = WebSocketStatusMessage(
-                    type="error",
-                    status="error",
-                    message="Invalid JSON format"
-                )
-                await manager.send_personal_json(error_message.model_dump(), connection_id)
+                    logger.error("WebSocket runtime error", 
+                               connection_id=connection_id,
+                               error=str(e),
+                               exc_info=True)
+                break
                 
             except Exception as e:
-                WS_ERRORS.labels(error_type="message_handling").inc()
-                logger.error("WebSocket message handling error", error=str(e), exc_info=True)
-                error_message = WebSocketStatusMessage(
-                    type="error",
-                    status="error",
-                    message="Internal server error"
-                )
-                await manager.send_personal_json(error_message.model_dump(), connection_id)
+                logger.error("Unexpected WebSocket error", 
+                           connection_id=connection_id,
+                           error=str(e),
+                           exc_info=True)
+                WS_ERRORS.labels(error_type="unexpected").inc()
+                break
                 
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected", connection_id=connection_id, user_id=str(user.id) if user else None)
     except Exception as e:
-        WS_ERRORS.inc()
-        logger.error("WebSocket error", error=str(e), exc_info=True)
+        logger.error("Fatal WebSocket error", 
+                   connection_id=connection_id,
+                   error=str(e),
+                   exc_info=True)
+        WS_ERRORS.labels(error_type="fatal").inc()
+        
     finally:
-        manager.disconnect(connection_id)
+        # Ensure cleanup happens even if an exception occurred
+        if connection_id in manager.active_connections:
+            manager.disconnect(connection_id)
+            logger.info("WebSocket connection cleaned up", connection_id=connection_id)
 
 
 async def handle_chat_message(connection_id: str, user: User, message_data: dict):

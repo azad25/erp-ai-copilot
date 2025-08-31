@@ -87,6 +87,7 @@ class QdrantSettings(BaseSettings):
 class KafkaSettings(BaseSettings):
     """Kafka configuration settings."""
     
+    enabled: bool = Field(default=False, env="KAFKA_ENABLED")
     brokers: str = Field(default="localhost:9092", env="KAFKA_BROKERS")
     topic_prefix: str = Field(default="ai-copilot", env="KAFKA_TOPIC_PREFIX")
     client_id: str = Field(default="ai-copilot-service", env="KAFKA_CLIENT_ID")

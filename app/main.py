@@ -165,10 +165,15 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
-# Include routers
+# Include API router
 app.include_router(api_router, prefix="/api/v1")
-app.include_router(websocket_router, prefix="/ws")
-app.include_router(grpc_router, prefix="/grpc")
+
+# Include WebSocket router
+app.include_router(websocket_router, prefix="")
+
+# Include gRPC router if enabled
+if settings.service.mode in ["grpc", "both"]:
+    app.include_router(grpc_router, prefix="/grpc")
 
 
 @app.middleware("http")

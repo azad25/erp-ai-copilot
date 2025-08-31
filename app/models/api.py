@@ -1,6 +1,7 @@
 """
 API request and response models for the AI Copilot service.
 """
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 from uuid import UUID
@@ -342,20 +343,38 @@ class RAGDocumentResponse(BaseModel):
 
 # WebSocket Models
 class WebSocketMessage(BaseModel):
-    """WebSocket message model."""
+    """WebSocket message model with JSON serialization support."""
     
     type: str = Field(..., description="Message type")
     data: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: Optional[float] = None
+    timestamp: float = Field(default_factory=lambda: time.time())
     message_id: Optional[str] = None
     
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
         """Override model_dump to handle datetime serialization."""
-        data = super().model_dump(**kwargs)
-        if self.timestamp is None:
-            import time
-            data['timestamp'] = time.time()
-        return data
+        # Create a copy of the data to avoid modifying the original
+        dump_data = super().model_dump(**kwargs)
+        
+        # Ensure timestamp is always a float
+        if 'timestamp' in dump_data and dump_data['timestamp'] is None:
+            dump_data['timestamp'] = time.time()
+            
+        # Convert any datetime objects in data to ISO format strings
+        if 'data' in dump_data and isinstance(dump_data['data'], dict):
+            dump_data['data'] = self._convert_datetimes(dump_data['data'])
+            
+        return dump_data
+    
+    @staticmethod
+    def _convert_datetimes(value: Any) -> Any:
+        """Recursively convert datetime objects to ISO format strings."""
+        if isinstance(value, dict):
+            return {k: WebSocketMessage._convert_datetimes(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [WebSocketMessage._convert_datetimes(item) for item in value]
+        elif hasattr(value, 'isoformat'):  # Handles datetime objects
+            return value.isoformat()
+        return value
 
 
 class WebSocketChatMessage(WebSocketMessage):
