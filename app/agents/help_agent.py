@@ -146,8 +146,11 @@ class HelpAgent(BaseAgent):
             }
         ]
 
-    def __init__(self, model: str = "gpt-4"):
-        super().__init__(AgentType.HELP, model)
+    def __init__(self, llm_service=None):
+        super().__init__(
+            name="help_agent",
+            llm_service=llm_service
+        )
         self.help_categories = [
             "feature_guide", "troubleshooting", "api_documentation", "tutorial",
             "best_practices", "system_info", "error_help", "workflow_guide",

@@ -28,10 +28,10 @@ class QueryAgent(BaseAgent):
     - HR analytics
     """
 
-    def __init__(self, model: str = "gpt-4"):
+    def __init__(self, llm_service=None):
         super().__init__(
             name="query_agent",
-            model=model,
+            llm_service=llm_service,
             system_prompt=self._get_default_system_prompt(),
             max_tokens=3000,
             temperature=0.3

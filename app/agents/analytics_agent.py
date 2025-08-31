@@ -151,8 +151,11 @@ class AnalyticsAgent(BaseAgent):
             }
         ]
 
-    def __init__(self, model: str = "gpt-4"):
-        super().__init__(AgentType.ANALYTICS, model)
+    def __init__(self, llm_service=None):
+        super().__init__(
+            name="analytics_agent",
+            llm_service=llm_service
+        )
         self.supported_analyses = [
             "trend_analysis", "forecasting", "correlation", "performance",
             "anomaly_detection", "segmentation", "predictive_modeling"

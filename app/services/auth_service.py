@@ -16,6 +16,7 @@ from app.database.models.database import User
 from app.config.settings import get_settings
 from app.database.connection import get_db_session
 from app.clients.auth_grpc import get_auth_service_client
+from app.services.token_cache_service import validate_token_with_cache
 
 settings = get_settings()
 security = HTTPBearer()
@@ -45,9 +46,8 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Get user info from auth service via gRPC
-    auth_client = get_auth_service_client()
-    user_info = await auth_client.validate_token(credentials.credentials)
+    # Get user info using token cache service (validates with auth service only once per token)
+    user_info = await validate_token_with_cache(credentials.credentials)
     
     if not user_info:
         raise HTTPException(
@@ -58,11 +58,11 @@ async def get_current_user(
     
     # Create a minimal user object with required attributes
     user = User(
-        id=user_info['user_id'],
+        id=user_info['id'],
         email=user_info['email'],
         organization_id=user_info.get('organization_id'),
-        is_active=True,  # If token is valid, user is considered active
-        is_verified=True,  # If token is valid, user is considered verified
+        is_active=user_info.get('is_active', True),
+        is_verified=user_info.get('is_verified', True),
     )
     
     return user
@@ -70,7 +70,7 @@ async def get_current_user(
 
 async def get_current_user_ws(token: str) -> User:
     """
-    Get the current authenticated user from WebSocket token using gRPC auth service.
+    Get the current authenticated user from WebSocket token using token cache service.
     
     Args:
         token: JWT token from WebSocket connection
@@ -94,11 +94,9 @@ async def get_current_user_ws(token: str) -> User:
     logger.info(f"Validating token (first 10 chars): {token[:10]}...")
     
     try:
-        # Get user info from auth service via gRPC
-        logger.info("Getting auth service client...")
-        auth_client = get_auth_service_client()
-        logger.info("Calling validate_token on auth client...")
-        user_info = await auth_client.validate_token(token)
+        # Get user info using token cache service (validates with auth service only once per token)
+        logger.info("Validating token with cache service...")
+        user_info = await validate_token_with_cache(token)
         
         if not user_info:
             logger.warning("Token validation returned no user info")
@@ -107,7 +105,7 @@ async def get_current_user_ws(token: str) -> User:
                 detail="Invalid authentication token (no user info)",
             )
             
-        logger.info(f"Token validation successful, user_id: {user_info.get('user_id')}")
+        logger.info(f"Token validation successful, user_id: {user_info.get('id')}")
         
     except HTTPException:
         raise  # Re-raise HTTP exceptions
@@ -120,11 +118,11 @@ async def get_current_user_ws(token: str) -> User:
     
     # Create a minimal user object with required attributes
     user = User(
-        id=user_info['user_id'],
+        id=user_info['id'],
         email=user_info['email'],
         organization_id=user_info.get('organization_id'),
-        is_active=True,  # If token is valid, user is considered active
-        is_verified=True,  # If token is valid, user is considered verified
+        is_active=user_info.get('is_active', True),
+        is_verified=user_info.get('is_verified', True),
     )
     
     return user

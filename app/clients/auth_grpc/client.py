@@ -9,8 +9,8 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 # Import generated gRPC code
-from app.proto.generated.auth.v1 import auth_pb2 as pb
-from app.proto.generated.auth.v1 import auth_pb2_grpc as pb_grpc
+from app.proto import auth_pb2 as pb
+from app.proto import auth_pb2_grpc as pb_grpc
 from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -76,12 +76,15 @@ class AuthServiceClient:
             logger.info("Creating ValidateTokenRequest...")
             request = pb.ValidateTokenRequest(token=token)
             
+            # Create metadata with authorization header
+            metadata = [('authorization', f'Bearer {token}')]
+            
             # Log the gRPC call
             logger.info(f"Calling ValidateToken RPC on stub: {self.stub}")
             logger.info(f"gRPC channel state: {self.channel.get_state(try_to_connect=True)}")
             
-            # Make the gRPC call
-            response = await self.stub.ValidateToken(request)
+            # Make the gRPC call with authorization metadata
+            response = await self.stub.ValidateToken(request, metadata=metadata)
             logger.info(f"Received response from Auth Service: valid={response.valid}")
             
             if not response.valid:
@@ -168,6 +171,33 @@ class AuthServiceClient:
             logger.error(f"Error checking permission: {str(e)}", exc_info=True)
             return False
     
+    async def get_organization(self, organization_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get organization information by organization ID.
+        
+        Args:
+            organization_id: ID of the organization to retrieve
+            
+        Returns:
+            Dict containing organization information if found, None otherwise
+        """
+        try:
+            request = pb.GetOrganizationRequest(organization_id=organization_id)
+            response = await self.stub.GetOrganization(request)
+            
+            if not response.organization:
+                logger.warning(f"Organization not found: {organization_id}")
+                return None
+                
+            return self._convert_organization_proto_to_dict(response.organization)
+            
+        except grpc.RpcError as e:
+            logger.error(f"gRPC error getting organization: {e.code()}: {e.details()}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting organization: {str(e)}", exc_info=True)
+            return None
+    
     def _convert_user_proto_to_dict(self, user_proto) -> Dict[str, Any]:
         """
         Convert a User proto message to a dictionary.
@@ -189,6 +219,27 @@ class AuthServiceClient:
             'last_login_at': user_proto.last_login_at.ToDatetime() if user_proto.HasField('last_login_at') else None,
             'created_at': user_proto.created_at.ToDatetime() if user_proto.HasField('created_at') else None,
             'updated_at': user_proto.updated_at.ToDatetime() if user_proto.HasField('updated_at') else None
+        }
+    
+    def _convert_organization_proto_to_dict(self, org_proto) -> Dict[str, Any]:
+        """
+        Convert an Organization proto message to a dictionary.
+        
+        Args:
+            org_proto: Organization proto message
+            
+        Returns:
+            Dict containing organization information
+        """
+        return {
+            'id': org_proto.id,
+            'name': org_proto.name,
+            'domain': org_proto.domain,
+            'is_active': org_proto.is_active,
+            'created_at': org_proto.created_at.ToDatetime() if org_proto.HasField('created_at') else None,
+            'updated_at': org_proto.updated_at.ToDatetime() if org_proto.HasField('updated_at') else None,
+            'user_count': org_proto.user_count,
+            'active_user_count': org_proto.active_user_count
         }
     
     async def close(self):

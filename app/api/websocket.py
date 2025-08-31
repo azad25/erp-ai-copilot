@@ -9,11 +9,15 @@ from typing import Dict, Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import and_
+from sqlalchemy.orm import selectinload
 
 from app.services.auth_service import get_current_user_ws
 from app.services.chat_service import ChatService
 from app.database.connection import get_db_session
-from app.database.models.database import Conversation, Message, User
+from app.database.models.database import Conversation, Message, User, ConversationTable, MessageTable
 from app.models.api import WebSocketMessage, WebSocketChatMessage, WebSocketChatResponse, WebSocketStatusMessage
 from app.core.metrics import WS_CONNECTIONS, WS_MESSAGES, WS_ERRORS
 
@@ -151,22 +155,42 @@ async def websocket_chat(
     token: Optional[str] = None
 ):
     """WebSocket endpoint for real-time chat."""
+    import uuid
+    from app.database.models.database import User
+    from app.services.token_cache_service import validate_token_with_cache
+    
     connection_id = str(uuid.uuid4())
     user = None
     
     try:
         logger.info("New WebSocket connection attempt", connection_id=connection_id)
         
-        # Since API Gateway handles authentication, create a default user for WebSocket connections
-        # In production, the API Gateway would validate the token before proxying
-        from app.database.models.database import User
-        user = User(
-            id="default-user-id",
-            email="websocket@user.com", 
-            organization_id="default-org",
-            is_active=True,
-            is_verified=True
-        )
+        # Validate token using cache service (validates with auth service only once per token)
+        if token:
+            # Validate token with cache service
+            user_info = await validate_token_with_cache(token)
+            if not user_info:
+                logger.warning("Token validation failed", connection_id=connection_id)
+                await websocket.close(code=1008, reason="Invalid token")
+                return
+            
+            # Create user object with data from cached user info
+            user = User(
+                id=user_info['id'],
+                email=user_info['email'],
+                organization_id=user_info['organization_id'],
+                is_active=user_info['is_active'],
+                is_verified=user_info['is_verified']
+            )
+            logger.info("User authenticated via token cache", 
+                       connection_id=connection_id, 
+                       user_id=user.id, 
+                       email=user.email,
+                       organization_id=user.organization_id)
+        else:
+            logger.warning("No token provided", connection_id=connection_id)
+            await websocket.close(code=1008, reason="Token required")
+            return
         
         logger.info("WebSocket user created", 
                    user_id=user.id,
@@ -174,6 +198,7 @@ async def websocket_chat(
         
         # Connect to WebSocket
         await manager.connect(websocket, connection_id, str(user.id))
+        logger.info("WebSocket connection accepted and added to manager", connection_id=connection_id)
         
         # Send connection confirmation
         status_message = WebSocketStatusMessage(
@@ -183,6 +208,7 @@ async def websocket_chat(
             data={"connection_id": connection_id, "user_id": str(user.id)}
         )
         await manager.send_personal_json(status_message.model_dump(), connection_id)
+        logger.info("Connection confirmation sent", connection_id=connection_id)
         
         # Handle incoming messages
         while True:
@@ -213,7 +239,7 @@ async def websocket_chat(
                 # Process valid message
                 try:
                     message_type = message_data.get("type")
-                    if message_type == "chat_message":
+                    if message_type in ["chat_message", "chat"]:
                         await handle_chat_message(connection_id, user, message_data)
                     elif message_type == "ping":
                         # Handle ping for keep-alive
@@ -302,9 +328,16 @@ async def websocket_chat(
 async def handle_chat_message(connection_id: str, user: User, message_data: dict):
     """Handle incoming chat messages."""
     try:
-        # Extract message data
-        conversation_id = message_data.get("conversation_id")
-        message_content = message_data.get("message")
+        # Extract message data - handle both direct message and nested data structure
+        conversation_id = message_data.get("conversation_id") or message_data.get("data", {}).get("conversation_id")
+        message_content = message_data.get("message") or message_data.get("data", {}).get("message")
+        
+        # Log the message data for debugging
+        logger.info("Processing chat message", 
+                   connection_id=connection_id,
+                   message_type=message_data.get("type"),
+                   has_message=bool(message_content),
+                   message_keys=list(message_data.keys()))
         
         if not message_content:
             error_message = WebSocketStatusMessage(
@@ -316,15 +349,19 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
             return
         
         # Get or create conversation
-        db = await get_db_session().__anext__()
-        try:
+        async with get_db_session() as db:
             if conversation_id:
                 # Verify conversation belongs to user
-                conversation = await db.execute(
-                    "SELECT * FROM conversations WHERE id = $1 AND user_id = $2 AND organization_id = $3",
-                    (conversation_id, user.id, user.organization_id)
+                result = await db.execute(
+                    select(ConversationTable).where(
+                        and_(
+                            ConversationTable.id == conversation_id,
+                            ConversationTable.user_id == user.id,
+                            ConversationTable.organization_id == user.organization_id
+                        )
+                    )
                 )
-                conversation = conversation.fetchone()
+                conversation = result.scalar_one_or_none()
                 if not conversation:
                     error_message = WebSocketStatusMessage(
                         type="error",
@@ -335,65 +372,40 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
                     return
             else:
                 # Create new conversation
-                conversation = await db.execute(
-                    "INSERT INTO conversations (organization_id, user_id, title, context, metadata) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-                    (
-                        user.organization_id,
-                        user.id,
-                        message_content[:100] + "..." if len(message_content) > 100 else message_content,
-                        {},
-                        {"source": "websocket"}
-                    )
+                conversation_id = uuid.uuid4()
+                conversation = ConversationTable(
+                    id=conversation_id,
+                    organization_id=uuid.UUID(user.organization_id) if isinstance(user.organization_id, str) else user.organization_id,
+                    user_id=uuid.UUID(user.id) if isinstance(user.id, str) else user.id,
+                    title=message_content[:100] + "..." if len(message_content) > 100 else message_content,
+                    context={},
+                    meta_data={"source": "websocket"}
                 )
-                conversation = conversation.fetchone()
-                conversation_id = conversation["id"]
+                db.add(conversation)
+                await db.flush()  # Get the ID without committing
             
-            # Save user message
-            user_message = await db.execute(
-                "INSERT INTO messages (conversation_id, user_id, role, content, metadata) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-                (
-                    conversation_id,
-                    user.id,
-                    "user",
-                    message_content,
-                    {"source": "websocket"}
+            # Generate AI response using ChatService (handles message storage internally)
+            try:
+                logger.info("Creating ChatService instance", connection_id=connection_id)
+                chat_service = ChatService()
+                logger.info("ChatService created, sending message", connection_id=connection_id)
+                response = await chat_service.send_message(
+                    conversation_id=str(conversation_id),
+                    user_id=user.id,
+                    message=message_content
                 )
-            )
-            user_message = user_message.fetchone()
+                logger.info("ChatService response received", connection_id=connection_id, response_type=type(response))
+            except Exception as chat_error:
+                logger.error("ChatService error", connection_id=connection_id, error=str(chat_error), exc_info=True)
+                raise
             
-            # Generate AI response
-            chat_service = ChatService(db, user)
-            response = await chat_service.generate_response(
-                conversation_id=conversation_id,
-                user_message=message_content,
-                context={}
-            )
-            
-            # Save AI response
-            ai_message = await db.execute(
-                "INSERT INTO messages (conversation_id, user_id, role, content, metadata) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-                (
-                    conversation_id,
-                    None,
-                    "assistant",
-                    response["content"],
-                    {
-                        "agent_type": response.get("agent_type"),
-                        "model_used": response.get("model_used"),
-                        "tokens_used": response.get("tokens_used"),
-                        "source": "websocket"
-                    }
-                )
-            )
-            ai_message = ai_message.fetchone()
-            
-            # Send response back to user
+            # Send response back to user (ChatService already stores the AI message)
             chat_response = WebSocketChatResponse(
                 type="chat_response",
                 conversation_id=conversation_id,
-                message_id=ai_message["id"],
-                content=response["content"],
-                agent_type=response.get("agent_type"),
+                message_id=str(response.message_id),
+                content=response.content,
+                agent_type=response.agent_type,
                 is_complete=True,
                 chunk_index=1,
                 total_chunks=1
@@ -402,11 +414,8 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
             await manager.send_personal_json(chat_response.model_dump(), connection_id)
             
             # Update conversation title if needed
-            if not conversation["title"] or conversation["title"].startswith("..."):
-                await db.execute(
-                    "UPDATE conversations SET title = $1 WHERE id = $2",
-                    (message_content[:100] + "..." if len(message_content) > 100 else message_content, conversation_id)
-                )
+            if not conversation.title or conversation.title.startswith("..."):
+                conversation.title = message_content[:100] + "..." if len(message_content) > 100 else message_content
             
             await db.commit()
             
@@ -417,11 +426,8 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
                 user_id=str(user.id)
             )
             
-        finally:
-            await db.close()
-            
     except Exception as e:
-        WS_ERRORS.inc()
+        WS_ERRORS.labels(error_type="chat_handler").inc()
         logger.error("Failed to handle chat message", error=str(e), exc_info=True)
         error_message = WebSocketStatusMessage(
             type="error",

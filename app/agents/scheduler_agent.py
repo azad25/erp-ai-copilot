@@ -182,8 +182,11 @@ class SchedulerAgent(BaseAgent):
             }
         ]
 
-    def __init__(self, model: str = "gpt-4"):
-        super().__init__(AgentType.SCHEDULER, model)
+    def __init__(self, llm_service=None):
+        super().__init__(
+            name="scheduler_agent",
+            llm_service=llm_service
+        )
         self.supported_schedules = [
             "daily", "weekly", "monthly", "quarterly", "yearly",
             "hourly", "every_x_minutes", "custom_cron", "one_time"

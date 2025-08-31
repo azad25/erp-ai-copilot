@@ -61,13 +61,20 @@ class BaseAgent(ABC):
     def __init__(
         self,
         name: str,
-        model: str = "gpt-4",
+        llm_service=None,
         system_prompt: Optional[str] = None,
         max_tokens: int = 4000,
         temperature: float = 0.7
     ):
         self.name = name
-        self.model = model
+        
+        # Use provided LLM service or get the global instance
+        if llm_service is None:
+            from app.services.llm_service import get_llm_service
+            self.llm_service = get_llm_service()
+        else:
+            self.llm_service = llm_service
+            
         self.system_prompt = system_prompt or self._get_default_system_prompt()
         self.max_tokens = max_tokens
         self.temperature = temperature

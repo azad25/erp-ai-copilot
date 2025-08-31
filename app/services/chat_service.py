@@ -13,12 +13,15 @@ from datetime import datetime, timedelta
 import uuid
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
+from sqlalchemy.future import select
+from sqlalchemy import and_, desc
 
 from app.models.api import (
     ChatMessage, ChatRequest, ChatResponse, ChatStreamResponse,
     ConversationStatus, AgentType, MessageType
 )
 from app.models.database import Conversation, Message
+from app.database.models.database import ConversationTable, MessageTable
 from app.database.db import get_db_session
 from app.core.exceptions import ChatError, ValidationError, RateLimitError
 from app.agents.agent_orchestrator import AgentOrchestrator
@@ -132,6 +135,17 @@ class ChatService:
         Returns:
             AI response with conversation details
         """
+        # Initialize conversation context if not exists (for new conversations)
+        if conversation_id not in self.active_conversations:
+            self.active_conversations[conversation_id] = ConversationContext(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                created_at=datetime.utcnow(),
+                last_activity=datetime.utcnow(),
+                message_count=0,
+                context={}
+            )
+        
         # Validate conversation access
         if not await self._validate_conversation_access(conversation_id, user_id):
             raise ValidationError("Invalid conversation or access denied")
@@ -241,31 +255,25 @@ class ChatService:
             raise ValidationError("Invalid conversation or access denied")
         
         async with get_db_session() as session:
-            messages = await session.execute(
-                """
-                SELECT * FROM messages 
-                WHERE conversation_id = :conversation_id
-                ORDER BY created_at DESC
-                LIMIT :limit OFFSET :offset
-                """,
-                {
-                    "conversation_id": conversation_id,
-                    "limit": limit,
-                    "offset": offset
-                }
+            result = await session.execute(
+                select(MessageTable)
+                .where(MessageTable.conversation_id == conversation_id)
+                .order_by(desc(MessageTable.created_at))
+                .limit(limit)
+                .offset(offset)
             )
+            messages = result.scalars().all()
             
             return [
                 ChatMessage(
                     id=msg.id,
                     conversation_id=msg.conversation_id,
-                    sender=msg.sender,
+                    sender=msg.role,  
                     content=msg.content,
-                    message_type=MessageType(msg.message_type),
+                    message_type=MessageType.TEXT,  
                     timestamp=msg.created_at,
-                    metadata=json.loads(msg.metadata or "{}")
-                )
-                for msg in messages
+                    metadata=msg.meta_data or {}
+                ) for msg in messages
             ]
 
     async def get_user_conversations(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -500,11 +508,10 @@ class ChatService:
         
         # Get conversation details
         async with get_db_session() as session:
-            conversation = await session.execute(
-                "SELECT * FROM conversations WHERE id = :conversation_id",
-                {"conversation_id": conversation_id}
+            result = await session.execute(
+                select(ConversationTable).where(ConversationTable.id == conversation_id)
             )
-            conversation = conversation.first()
+            conversation = result.scalar_one_or_none()
         
         return {
             "messages": [
@@ -535,29 +542,32 @@ class ChatService:
         Returns:
             Message ID
         """
-        message_id = str(uuid.uuid4())
+        message_id = uuid.uuid4()
         
         async with get_db_session() as session:
-            message = Message(
+            message = MessageTable(
                 id=message_id,
-                conversation_id=conversation_id,
-                sender=sender,
+                conversation_id=uuid.UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id,
+                user_id=None if sender == "assistant" else (uuid.UUID(sender) if isinstance(sender, str) and len(sender) == 36 else None),
+                role=sender,
                 content=content,
-                message_type=message_type.value,
-                metadata=json.dumps(metadata or {}),
+                meta_data=metadata or {},
                 created_at=datetime.utcnow()
             )
             session.add(message)
             
             # Update conversation timestamp
-            await session.execute(
-                "UPDATE conversations SET updated_at = :updated_at WHERE id = :conversation_id",
-                {"updated_at": datetime.utcnow(), "conversation_id": conversation_id}
+            conv_id = uuid.UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id
+            result = await session.execute(
+                select(ConversationTable).where(ConversationTable.id == conv_id)
             )
+            conversation = result.scalar_one_or_none()
+            if conversation:
+                conversation.updated_at = datetime.utcnow()
             
             await session.commit()
         
-        return message_id
+        return str(message_id)
 
     async def _validate_conversation_access(self, conversation_id: str, user_id: str) -> bool:
         """
@@ -575,13 +585,22 @@ class ChatService:
             return self.active_conversations[conversation_id].user_id == user_id
         
         # Check database
-        async with get_db_session() as session:
-            conversation = await session.execute(
-                "SELECT user_id FROM conversations WHERE id = :conversation_id",
-                {"conversation_id": conversation_id}
-            )
-            result = conversation.first()
-            return result and result.user_id == user_id
+        try:
+            async with get_db_session() as session:
+                # Convert string IDs to UUID for database query
+                conv_uuid = uuid.UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id
+                result = await session.execute(
+                    select(ConversationTable.user_id).where(ConversationTable.id == conv_uuid)
+                )
+                conversation_user_id = result.scalar_one_or_none()
+                
+                # Convert user_id to string for comparison if needed
+                if conversation_user_id:
+                    return str(conversation_user_id) == str(user_id)
+                return False
+        except Exception as e:
+            logging.error(f"Error validating conversation access: {e}")
+            return False
 
     def _check_rate_limit(self, user_id: str):
         """
@@ -624,11 +643,10 @@ class ChatService:
             List of conversation IDs
         """
         async with get_db_session() as session:
-            conversations = await session.execute(
-                "SELECT id FROM conversations WHERE user_id = :user_id",
-                {"user_id": user_id}
+            result = await session.execute(
+                select(ConversationTable.id).where(ConversationTable.user_id == user_id)
             )
-            return [conv.id for conv in conversations]
+            return [conv_id for conv_id in result.scalars().all()]
 
     async def _cleanup_expired_conversations(self):
         """

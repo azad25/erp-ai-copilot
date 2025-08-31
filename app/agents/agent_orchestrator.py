@@ -101,7 +101,7 @@ class AgentOrchestrator:
         self.task_timeout = 300  # seconds
         
         # Initialize master agent
-        self.master_agent = MasterAgent()
+        self.master_agent = MasterAgent(name="master_agent")
         
         # Performance tracking
         self.system_metrics = {
@@ -134,9 +134,9 @@ class AgentOrchestrator:
         
         registration = AgentRegistration(
             agent_id=agent_id,
-            agent_type=agent.agent_type,
+            agent_type=agent.name,
             agent_instance=agent,
-            capabilities=capabilities or agent.get_available_tools(),
+            capabilities=capabilities or [],
             health_status=HealthStatus.HEALTHY.value,
             last_heartbeat=datetime.utcnow(),
             performance_metrics={
@@ -153,11 +153,11 @@ class AgentOrchestrator:
         self.agents[agent_id] = registration
         
         # Add to agent type mapping
-        if agent.agent_type not in self.agent_types:
-            self.agent_types[agent.agent_type] = []
-        self.agent_types[agent.agent_type].append(agent_id)
+        if agent.name not in self.agent_types:
+            self.agent_types[agent.name] = []
+        self.agent_types[agent.name].append(agent_id)
         
-        logging.info(f"Registered agent {agent_id} of type {agent.agent_type}")
+        logging.info(f"Registered agent {agent_id} of type {agent.name}")
         return agent_id
 
     def unregister_agent(self, agent_id: str) -> bool:

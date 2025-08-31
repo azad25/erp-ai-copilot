@@ -2,7 +2,8 @@
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, String, DateTime, Boolean, Text, JSON
+from sqlalchemy import Column, String, Text, DateTime, JSON, Integer
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -48,12 +49,13 @@ class ConversationTable(Base):
     """SQLAlchemy table for conversations."""
     __tablename__ = "conversations"
     
-    id = Column(String, primary_key=True)
-    user_id = Column(String, nullable=False)
-    organization_id = Column(String, nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)  # No FK constraint - references auth service
+    organization_id = Column(UUID(as_uuid=True), nullable=False)  # No FK constraint - references auth service
     title = Column(String, nullable=False)
     context = Column(JSON, default={})
-    meta_data = Column(JSON, default={})
+    meta_data = Column("metadata_json", JSON, default={})
+    status = Column(String, default='active')
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -62,11 +64,12 @@ class MessageTable(Base):
     """SQLAlchemy table for messages."""
     __tablename__ = "messages"
     
-    id = Column(String, primary_key=True)
-    conversation_id = Column(String, nullable=False)
-    user_id = Column(String, nullable=True)
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    conversation_id = Column(UUID(as_uuid=True), nullable=False)  # References local conversations table
+    user_id = Column(UUID(as_uuid=True), nullable=True)  # No FK constraint - references auth service
     role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
-    meta_data = Column(JSON, default={})
+    meta_data = Column("metadata_json", JSON, default={})  # Map to 'metadata' column in DB
+    tokens_used = Column(Integer, default=0)
+    model_used = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

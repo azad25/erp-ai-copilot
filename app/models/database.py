@@ -14,64 +14,20 @@ from pydantic import BaseModel, Field
 Base = declarative_base()
 
 
-class Organization(Base):
-    """Organization model."""
-    
-    __tablename__ = "organizations"
-    
-    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    domain: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    settings: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    users: Mapped[List["User"]] = relationship("User", back_populates="organization", cascade="all, delete-orphan")
-    conversations: Mapped[List["Conversation"]] = relationship("Conversation", back_populates="organization", cascade="all, delete-orphan")
-    knowledge_base: Mapped[List["KnowledgeBase"]] = relationship("KnowledgeBase", back_populates="organization", cascade="all, delete-orphan")
-    scheduled_tasks: Mapped[List["ScheduledTask"]] = relationship("ScheduledTask", back_populates="organization", cascade="all, delete-orphan")
-    audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="organization", cascade="all, delete-orphan")
+# Organization data comes from auth service via gRPC - no local table needed
 
 
-class User(Base):
-    """User model."""
-    
-    __tablename__ = "users"
-    
-    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
-    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    username: Mapped[str] = mapped_column(String(100), nullable=False)
-    email: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
-    permissions: Mapped[List[str]] = mapped_column(JSONB, default=list)
-    preferences: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
-    conversations: Mapped[List["Conversation"]] = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
-    messages: Mapped[List["Message"]] = relationship("Message", back_populates="user", cascade="all, delete-orphan")
-    agent_executions: Mapped[List["AgentExecution"]] = relationship("AgentExecution", back_populates="user", cascade="all, delete-orphan")
-    scheduled_tasks: Mapped[List["ScheduledTask"]] = relationship("ScheduledTask", back_populates="user", cascade="all, delete-orphan")
-    audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="user", cascade="all, delete-orphan")
-    
-    # Indexes
-    __table_args__ = (
-        Index('idx_users_org_username', 'organization_id', 'username', unique=True),
-        Index('idx_users_org_email', 'organization_id', 'email', unique=True),
-    )
+# User data comes from auth service via gRPC - no local table needed
 
 
 class Conversation(Base):
-    """Conversation model."""
+    """Conversation model - no foreign keys to users/orgs."""
     
     __tablename__ = "conversations"
     
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
-    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
+    user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     context: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
@@ -79,9 +35,7 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationships
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="conversations")
-    user: Mapped["User"] = relationship("User", back_populates="conversations")
+    # Relationships (only to local tables)
     messages: Mapped[List["Message"]] = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     agent_executions: Mapped[List["AgentExecution"]] = relationship("AgentExecution", back_populates="conversation", cascade="all, delete-orphan")
     
@@ -94,13 +48,13 @@ class Conversation(Base):
 
 
 class Message(Base):
-    """Message model."""
+    """Message model - no foreign keys to users."""
     
     __tablename__ = "messages"
     
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
-    user_id: Mapped[Optional[UUID]] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    user_id: Mapped[Optional[UUID]] = mapped_column(PostgresUUID(as_uuid=True), nullable=True)  # References auth service
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
@@ -108,9 +62,8 @@ class Message(Base):
     model_used: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     
-    # Relationships
+    # Relationships (only to local tables)
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="messages")
     
     # Indexes
     __table_args__ = (
@@ -121,13 +74,13 @@ class Message(Base):
 
 
 class AgentExecution(Base):
-    """Agent execution model."""
+    """Agent execution model - no foreign keys to users."""
     
     __tablename__ = "agent_executions"
     
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False)
     action_type: Mapped[str] = mapped_column(String(50), nullable=False)
     input_data: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
@@ -138,9 +91,8 @@ class AgentExecution(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
-    # Relationships
+    # Relationships (only to local tables)
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="agent_executions")
-    user: Mapped["User"] = relationship("User", back_populates="agent_executions")
     
     # Indexes
     __table_args__ = (
@@ -152,12 +104,12 @@ class AgentExecution(Base):
 
 
 class KnowledgeBase(Base):
-    """Knowledge base model."""
+    """Knowledge base model - no foreign keys to orgs."""
     
     __tablename__ = "knowledge_base"
     
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
-    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -169,9 +121,6 @@ class KnowledgeBase(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationships
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="knowledge_base")
-    
     # Indexes
     __table_args__ = (
         Index('idx_knowledge_base_org_type', 'organization_id', 'document_type'),
@@ -181,13 +130,13 @@ class KnowledgeBase(Base):
 
 
 class ScheduledTask(Base):
-    """Scheduled task model."""
+    """Scheduled task model - no foreign keys to users/orgs."""
     
     __tablename__ = "scheduled_tasks"
     
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
-    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
+    user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
     task_type: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -199,10 +148,6 @@ class ScheduledTask(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationships
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="scheduled_tasks")
-    user: Mapped["User"] = relationship("User", back_populates="scheduled_tasks")
-    
     # Indexes
     __table_args__ = (
         Index('idx_scheduled_tasks_org_status', 'organization_id', 'status'),
@@ -212,13 +157,13 @@ class ScheduledTask(Base):
 
 
 class AuditLog(Base):
-    """Audit log model."""
+    """Audit log model - no foreign keys to users/orgs."""
     
     __tablename__ = "audit_logs"
     
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
-    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    user_id: Mapped[Optional[UUID]] = mapped_column(PostgresUUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    organization_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
+    user_id: Mapped[Optional[UUID]] = mapped_column(PostgresUUID(as_uuid=True), nullable=True)  # References auth service
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
     resource_id: Mapped[Optional[UUID]] = mapped_column(PostgresUUID(as_uuid=True), nullable=True)
@@ -226,10 +171,6 @@ class AuditLog(Base):
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 compatible
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relationships
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="audit_logs")
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="audit_logs")
     
     # Indexes
     __table_args__ = (
@@ -240,35 +181,10 @@ class AuditLog(Base):
 
 
 # Pydantic models for API responses
-class OrganizationResponse(BaseModel):
-    """Organization response model."""
-    
-    id: UUID
-    name: str
-    domain: Optional[str] = None
-    settings: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-    updated_at: datetime
-    
-    class Config:
-        from_attributes = True
+# Organization response models removed - data comes from auth service
 
 
-class UserResponse(BaseModel):
-    """User response model."""
-    
-    id: UUID
-    organization_id: UUID
-    username: str
-    email: str
-    role: str
-    permissions: List[str] = Field(default_factory=list)
-    preferences: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-    updated_at: datetime
-    
-    class Config:
-        from_attributes = True
+# User response models removed - data comes from auth service
 
 
 class ConversationResponse(BaseModel):

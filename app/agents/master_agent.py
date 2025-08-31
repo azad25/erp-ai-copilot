@@ -92,16 +92,17 @@ class MasterAgent(BaseAgent):
             }
         ]
     
-    def __init__(self, llm_service: LLMService):
+    def __init__(self, name: str = "master", llm_service: LLMService = None):
         """
         Initialize the master agent with LLM service and specialized agents.
         
         Args:
-            llm_service: The LLM service for model interactions
+            name: Agent name
+            llm_service: The LLM service for model interactions (optional)
         """
-        super().__init__("master", llm_service)
+        super().__init__(name, llm_service=llm_service)
         self.agents = {}
-        self._initialize_agents(llm_service)
+        self._initialize_agents(self.llm_service)
         self.performance_metrics = {
             "total_requests": 0,
             "successful_requests": 0,

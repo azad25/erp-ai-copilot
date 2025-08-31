@@ -123,8 +123,11 @@ class ActionAgent(BaseAgent):
             }
         ]
 
-    def __init__(self, model: str = "gpt-4"):
-        super().__init__(AgentType.ACTION, model)
+    def __init__(self, llm_service=None):
+        super().__init__(
+            name="action_agent",
+            llm_service=llm_service
+        )
         self.supported_actions = [
             "create", "update", "delete", "approve", "reject", 
             "assign", "schedule", "notify", "export", "import"

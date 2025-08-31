@@ -1,16 +1,21 @@
 """
 Database connection management for the AI Copilot service.
 """
+import os
 import asyncio
-from typing import AsyncGenerator, Optional
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.pool import NullPool
-from sqlalchemy import text
-from motor.motor_asyncio import AsyncIOMotorClient
-from redis.asyncio import Redis, ConnectionPool
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.http import models as rest
-from qdrant_client.http.exceptions import UnexpectedResponse
+import logging
+from contextlib import asynccontextmanager
+from typing import Optional, Any, Dict, List
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
+import asyncpg
+import motor.motor_asyncio
+import redis.asyncio as redis
+import qdrant_client
+from qdrant_client.http import models as qdrant_models
+from elasticsearch import AsyncElasticsearch
 import structlog
 
 from app.config.settings import get_settings
@@ -173,16 +178,40 @@ class DatabaseManager:
         if not self.postgres_session_factory:
             raise RuntimeError("PostgreSQL not initialized")
         
-        async with self.postgres_session_factory() as session:
+        session = self.postgres_session_factory()
+        try:
+            yield session
+        except Exception as e:
             try:
-                yield session
-            except Exception as e:
                 await session.rollback()
-                logger.error("Database session error", error=str(e))
-                raise
-            finally:
+            except Exception as rollback_error:
+                logger.error("Error during rollback", error=str(rollback_error))
+            logger.error("Database session error", error=str(e))
+            raise
+        finally:
+            try:
                 await session.close()
+            except Exception as close_error:
+                logger.error("Error closing session", error=str(close_error))
                 
+    async def execute_query(self, query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """Execute a query and return results."""
+        async with get_db_session() as session:
+            try:
+                if params:
+                    result = await session.execute(text(query), params)
+                else:
+                    result = await session.execute(text(query))
+                
+                # Convert result to list of dictionaries
+                columns = result.keys()
+                rows = result.fetchall()
+                return [dict(zip(columns, row)) for row in rows]
+            except Exception as e:
+                logger.error("Error executing query", error=str(e))
+                await session.rollback()
+                raise
+    
     def get_postgres_client(self):
         """Get PostgreSQL client."""
         if not self.postgres_engine:

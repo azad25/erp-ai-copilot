@@ -24,6 +24,9 @@ from app.middleware.rate_limit import RateLimitMiddleware
 from app.core.metrics import setup_metrics
 from app.rag.service import RAGService
 from app.clients.auth_grpc import get_auth_service_client, close_auth_service_client
+from app.services.jwt_service import initialize_jwt_service
+from app.services.token_cache_service import initialize_token_cache_service
+import redis.asyncio as redis
 
 # Configure structured logging
 structlog.configure(
@@ -86,6 +89,46 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("RAG engine disabled in settings")
             
+        # Initialize Redis connection for token caching
+        try:
+            redis_client = redis.Redis(
+                host=settings.redis.host,
+                port=settings.redis.port,
+                password=settings.redis.password,
+                db=settings.redis.db,
+                decode_responses=True
+            )
+            # Test Redis connection
+            await redis_client.ping()
+            logger.info("Redis connection established successfully")
+            app.state.redis_client = redis_client
+        except Exception as e:
+            logger.error("Failed to connect to Redis", error=str(e))
+            if settings.service.debug:
+                raise
+        
+        # Initialize token cache service
+        try:
+            token_cache_service = initialize_token_cache_service(redis_client, cache_ttl_minutes=30)
+            logger.info("Token cache service initialized successfully")
+            app.state.token_cache_service = token_cache_service
+        except Exception as e:
+            logger.error("Failed to initialize token cache service", error=str(e))
+            if settings.service.debug:
+                raise
+        
+        # Initialize JWT service for local token validation (fallback)
+        try:
+            jwt_secret = settings.security.jwt_secret
+            jwt_algorithm = settings.security.jwt_algorithm
+            jwt_service = initialize_jwt_service(jwt_secret, jwt_algorithm)
+            logger.info("JWT service initialized successfully")
+            app.state.jwt_service = jwt_service
+        except Exception as e:
+            logger.error("Failed to initialize JWT service", error=str(e))
+            if settings.service.debug:
+                raise
+        
         # Initialize gRPC clients
         try:
             # Initialize auth service client
@@ -104,16 +147,25 @@ async def lifespan(app: FastAPI):
         raise
     
     finally:
-        # Shutdown
-        logger.info("Shutting down AI Copilot service")
+        # Cleanup resources
+        logger.info("Shutting down AI Copilot Service...")
         
-        # Close Kafka connections
-        await kafka_service.close()
-        logger.info("Kafka connections closed")
+        # Close Redis connection
+        if hasattr(app.state, 'redis_client'):
+            await app.state.redis_client.close()
+            logger.info("Redis connection closed")
         
         # Close database connections
         await close_database()
-        logger.info("Database connections closed")
+        
+        # Close gRPC clients
+        await close_auth_service_client()
+        
+        # Close Kafka service
+        if kafka_service:
+            await kafka_service.close()
+        
+        logger.info("AI Copilot Service shutdown complete")
         
         # Close gRPC clients
         await close_auth_service_client()
