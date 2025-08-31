@@ -65,6 +65,22 @@ class ConversationStatus(str, Enum):
     DELETED = "deleted"
 
 
+# User Model
+class User(BaseModel):
+    """User model for authentication and identification."""
+    id: UUID
+    username: str
+    email: str
+    full_name: Optional[str] = None
+    is_active: bool = True
+    is_superuser: bool = False
+    roles: List[str] = Field(default_factory=list)
+    organization_id: Optional[UUID] = None
+    
+    class Config:
+        from_attributes = True
+
+
 # Chat API Models
 class ChatMessage(BaseModel):
     """Chat message model."""

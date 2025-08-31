@@ -163,41 +163,61 @@ async def websocket_chat(
     user = None
     
     try:
-        logger.info("New WebSocket connection attempt", connection_id=connection_id)
+        logger.info("New WebSocket connection attempt", 
+                   connection_id=connection_id,
+                   has_token=bool(token))
         
-        # Validate token using cache service (validates with auth service only once per token)
-        if token:
-            # Validate token with cache service
-            user_info = await validate_token_with_cache(token)
-            if not user_info:
-                logger.warning("Token validation failed", connection_id=connection_id)
-                await websocket.close(code=1008, reason="Invalid token")
-                return
-            
-            # Create user object with data from cached user info
-            user = User(
-                id=user_info['id'],
-                email=user_info['email'],
-                organization_id=user_info['organization_id'],
-                is_active=user_info['is_active'],
-                is_verified=user_info['is_verified']
-            )
-            logger.info("User authenticated via token cache", 
-                       connection_id=connection_id, 
-                       user_id=user.id, 
-                       email=user.email,
-                       organization_id=user.organization_id)
-        else:
-            logger.warning("No token provided", connection_id=connection_id)
-            await websocket.close(code=1008, reason="Token required")
+        if not token:
+            logger.warning("No token provided in WebSocket connection")
+            await websocket.close(code=1008, reason="Authentication token required")
+            return
+
+        # Validate token using cache service
+        user_info = await validate_token_with_cache(token)
+        if not user_info:
+            logger.warning("Token validation failed", 
+                         connection_id=connection_id,
+                         token_start=token[:10] + "..." if token else "None")
+            await websocket.close(code=1008, reason="Invalid or expired token")
             return
         
-        logger.info("WebSocket user created", 
-                   user_id=user.id,
-                   email=user.email)
-        
+        # Create user object with data from cached user info
+        try:
+            user = User(
+                id=user_info.get('id'),
+                email=user_info.get('email', 'unknown@example.com'),
+                organization_id=user_info.get('organization_id'),
+                is_active=user_info.get('is_active', False),
+                is_verified=user_info.get('is_verified', False)
+            )
+            logger.info("User authenticated", 
+                       connection_id=connection_id, 
+                       user_id=user.id,
+                       email=user.email,
+                       is_active=user.is_active,
+                       is_verified=user.is_verified)
+            
+        except Exception as e:
+            logger.error("Error creating user object", 
+                        error=str(e),
+                        user_info_keys=user_info.keys() if user_info else None)
+            await websocket.close(code=1011, reason="Internal server error")
+            return
+
+        # Check if user is active and verified
+        if not user.is_active or not user.is_verified:
+            logger.warning("User not active or not verified", 
+                          user_id=user.id,
+                          is_active=user.is_active,
+                          is_verified=user.is_verified)
+            await websocket.close(code=1008, reason="User account is not active or not verified")
+            return
+
         # Connect to WebSocket
         await manager.connect(websocket, connection_id, str(user.id))
+        logger.info("WebSocket connection established", 
+                   connection_id=connection_id,
+                   user_id=user.id)
         logger.info("WebSocket connection accepted and added to manager", connection_id=connection_id)
         
         # Send connection confirmation
@@ -217,7 +237,11 @@ async def websocket_chat(
                 try:
                     data = await asyncio.wait_for(websocket.receive_text(), timeout=300)  # 5 minute timeout
                 except asyncio.TimeoutError:
-                    logger.info("WebSocket connection timed out", connection_id=connection_id)
+                    logger.info("WebSocket connection timed out", 
+                              connection_id=connection_id,
+                              user_id=user.id)
+                    await websocket.close(code=1001, reason="Connection timeout")
+                    break
                     break
                     
                 try:

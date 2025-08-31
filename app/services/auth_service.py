@@ -12,11 +12,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.database.models.database import User
 from app.config.settings import get_settings
 from app.database.connection import get_db_session
 from app.clients.auth_grpc import get_auth_service_client
 from app.services.token_cache_service import validate_token_with_cache
+from app.models.api import User
 
 settings = get_settings()
 security = HTTPBearer()
@@ -56,13 +56,17 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Create a minimal user object with required attributes
+    # Create a user object with fields matching the API User model
+    full_name = f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip()
     user = User(
         id=user_info['id'],
+        username=user_info.get('email', '').split('@')[0],  # Use email prefix as username
         email=user_info['email'],
-        organization_id=user_info.get('organization_id'),
+        full_name=full_name if full_name else None,
         is_active=user_info.get('is_active', True),
-        is_verified=user_info.get('is_verified', True),
+        is_superuser=user_info.get('is_superuser', False),
+        roles=user_info.get('roles', []),
+        organization_id=user_info.get('organization_id')
     )
     
     return user
@@ -116,13 +120,17 @@ async def get_current_user_ws(token: str) -> User:
             detail=f"Authentication service error: {str(e)}"
         )
     
-    # Create a minimal user object with required attributes
+    # Create a user object with fields matching the API User model
+    full_name = f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip()
     user = User(
         id=user_info['id'],
+        username=user_info.get('email', '').split('@')[0],  # Use email prefix as username
         email=user_info['email'],
-        organization_id=user_info.get('organization_id'),
+        full_name=full_name if full_name else None,
         is_active=user_info.get('is_active', True),
-        is_verified=user_info.get('is_verified', True),
+        is_superuser=user_info.get('is_superuser', False),
+        roles=user_info.get('roles', []),
+        organization_id=user_info.get('organization_id')
     )
     
     return user

@@ -5,20 +5,29 @@ import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, TypeVar, Type, Union, Tuple, AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 import asyncpg
 import motor.motor_asyncio
+from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as redis
+from redis.asyncio import Redis, ConnectionPool
 import qdrant_client
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
 from elasticsearch import AsyncElasticsearch
 import structlog
+from types import TracebackType
 
 from app.config.settings import get_settings
+
+# Type variables for better type hints
+T = TypeVar('T')
+ResultType = List[Dict[str, Any]]
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -194,37 +203,65 @@ class DatabaseManager:
             except Exception as close_error:
                 logger.error("Error closing session", error=str(close_error))
                 
-    async def execute_query(self, query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Execute a query and return results."""
+    async def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> ResultType:
+        """
+        Execute a SQL query and return the results as a list of dictionaries.
+        
+        Args:
+            query: The SQL query to execute
+            params: Optional dictionary of parameters for parameterized queries
+            
+        Returns:
+            List[Dict[str, Any]]: Query results as a list of dictionaries
+            
+        Raises:
+            SQLAlchemyError: If there's an error executing the query
+        """
+        result: ResultType = []
+        
         async with get_db_session() as session:
             try:
+                # Execute the query with parameters if provided
                 if params:
-                    result = await session.execute(text(query), params)
+                    result_proxy = await session.execute(text(query), params)
                 else:
-                    result = await session.execute(text(query))
+                    result_proxy = await session.execute(text(query))
                 
                 # Convert result to list of dictionaries
-                columns = result.keys()
-                rows = result.fetchall()
-                return [dict(zip(columns, row)) for row in rows]
-            except Exception as e:
-                logger.error("Error executing query", error=str(e))
+                if result_proxy.returns_rows:
+                    columns = list(result_proxy.keys())
+                    rows = result_proxy.fetchall()
+                    result = [dict(zip(columns, row)) for row in rows]
+                
+                return result
+                
+            except SQLAlchemyError as e:
+                logger.error("Database query error", query=query, error=str(e))
                 await session.rollback()
                 raise
+                
+            except Exception as e:
+                logger.error("Unexpected error executing query", query=query, error=str(e))
+                await session.rollback()
+                raise SQLAlchemyError(f"Failed to execute query: {str(e)}")
     
-    def get_postgres_client(self):
-        """Get PostgreSQL client."""
+    def get_postgres_client(self) -> 'sqlalchemy.ext.asyncio.AsyncEngine':
+        """Get PostgreSQL client.
+        
+        Returns:
+            AsyncEngine: The async SQLAlchemy engine instance for PostgreSQL
+        """
         if not self.postgres_engine:
             raise RuntimeError("PostgreSQL not initialized")
         return self.postgres_engine
     
-    def get_mongodb_database(self):
+    def get_mongodb_database(self) -> 'motor.motor_asyncio.AsyncIOMotorDatabase':
         """Get MongoDB database instance."""
         if not self.mongodb_client:
             raise RuntimeError("MongoDB not initialized")
         return self.mongodb_client[settings.mongodb.database]
         
-    def get_mongo_client(self):
+    def get_mongo_client(self) -> 'motor.motor_asyncio.AsyncIOMotorClient':
         """Get MongoDB client."""
         if not self.mongodb_client:
             raise RuntimeError("MongoDB not initialized")

@@ -10,12 +10,11 @@ from sqlalchemy import select, func, desc
 import structlog
 
 from app.core.database import get_db_session
-from app.models.database import Conversation, Message, User, AgentExecution, KnowledgeBase
+from app.models.database import Conversation, Message, AgentExecution, KnowledgeBase
 from app.services.infrastructure_service import InfrastructureService
 from app.services.auth_service import get_current_user
 from app.core.metrics import get_metrics_summary
-from app.models.api import ErrorResponse
-from app.models.database import User
+from app.models.api import ErrorResponse, User
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()

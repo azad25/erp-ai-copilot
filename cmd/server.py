@@ -364,11 +364,22 @@ class UnifiedAICopilot:
     def _create_full_app(self) -> FastAPI:
         """Create full FastAPI app with enterprise features."""
         try:
+            print("🔍 Attempting to import full app from app.main...")
             # Import the full app from app.main
             from app.main import app
+            print("✅ Successfully imported full app from app.main")
             return app
-        except ImportError:
-            print("⚠️ Full app not available, using simple app")
+        except ImportError as e:
+            print(f"⚠️ Failed to import full app: {e}")
+            import traceback
+            traceback.print_exc()
+            print("🔄 Falling back to simple app")
+            return self._create_simple_app()
+        except Exception as e:
+            print(f"❌ Unexpected error loading full app: {e}")
+            import traceback
+            traceback.print_exc()
+            print("🔄 Falling back to simple app")
             return self._create_simple_app()
     
     async def start_server(self, host: str = "0.0.0.0", port: int = 8003):
