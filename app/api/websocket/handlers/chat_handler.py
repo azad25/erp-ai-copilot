@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import structlog
 
-from app.database.models.database import User, Message as MessageModel, Conversation as ConversationModel
+from app.database.models.database import User, MessageTable as MessageModel, ConversationTable as ConversationModel
 from app.services.chat_service import ChatService
 from app.api.websocket.handlers.base_handler import BaseMessageHandler
 from app.api.websocket.models.messages import WebSocketChatMessage, WebSocketStatusMessage
@@ -29,15 +29,29 @@ class ChatMessageHandler(BaseMessageHandler):
     async def handle(
         self,
         websocket: WebSocket,
-        message: WebSocketChatMessage,
+        message: dict,
         user: User,
         db_session: AsyncSession
     ) -> None:
         """Handle a chat message."""
         try:
+            # Extract message data from dict
+            conversation_id = message.get("conversation_id")
+            message_text = message.get("message")
+            metadata = message.get("metadata", {})
+            
+            if not conversation_id or not message_text:
+                await self._send_error(
+                    websocket,
+                    "Missing required fields: conversation_id and message",
+                    error_code="validation_error",
+                    status_code=400
+                )
+                return
+            
             # Create or get conversation
             conversation = await self._get_or_create_conversation(
-                message.conversation_id, user.id, db_session
+                conversation_id, user.id, db_session
             )
             
             if not conversation:
@@ -49,25 +63,21 @@ class ChatMessageHandler(BaseMessageHandler):
                 )
                 return
             
-            # Save the message to the database
-            message_id = str(uuid.uuid4())
-            db_message = MessageModel(
-                id=message_id,
-                conversation_id=conversation.id,
+            # Message will be saved by ChatService, so skip saving here
+            logger.info(
+                "Processing chat message",
+                conversation_id=str(conversation.id),
                 user_id=user.id,
-                content=message.message,
-                metadata=message.metadata or {}
+                content_length=len(message_text)
             )
-            db_session.add(db_message)
-            await db_session.commit()
             
             # Process the message with the chat service
             chat_service = ChatService(db_session)
             response = await chat_service.send_message(
                 conversation_id=conversation.id,
                 user_id=user.id,
-                message=message.message,
-                metadata=message.metadata or {}
+                message=message_text,
+                metadata=metadata
             )
             
             # Create and send the response
@@ -75,11 +85,11 @@ class ChatMessageHandler(BaseMessageHandler):
                 message_id=message_id,
                 conversation_id=conversation.id,
                 sender_id=user.id,
-                content=response.response,
+                content=response.content,
                 status="success",
                 metadata={
-                    "response_id": response.message_id,
-                    "agent_type": response.agent_type,
+                    "response_id": getattr(response, 'message_id', response.session_id),
+                    "agent_type": response.metadata.get("agent_type", "unknown"),
                     **response.metadata
                 }
             )
@@ -109,25 +119,51 @@ class ChatMessageHandler(BaseMessageHandler):
     ) -> Optional[ConversationModel]:
         """Get or create a conversation."""
         try:
+            import uuid as uuid_lib
+            
+            # Convert string IDs to UUID objects
+            if conversation_id:
+                try:
+                    conv_uuid = uuid_lib.UUID(conversation_id)
+                except ValueError:
+                    # If conversation_id is not a valid UUID, generate a new one
+                    conv_uuid = uuid_lib.uuid4()
+            else:
+                conv_uuid = uuid_lib.uuid4()
+                
+            try:
+                user_uuid = uuid_lib.UUID(user_id)
+            except ValueError:
+                # If user_id is not a valid UUID, generate a new one based on string
+                user_uuid = uuid_lib.uuid5(uuid_lib.NAMESPACE_DNS, user_id)
+            
             if conversation_id:
                 # Try to get existing conversation
                 result = await db_session.execute(
                     select(ConversationModel)
-                    .where(ConversationModel.id == conversation_id)
-                    .where(ConversationModel.user_id == user_id)
+                    .where(ConversationModel.id == conv_uuid)
+                    .where(ConversationModel.user_id == user_uuid)
                 )
                 conversation = result.scalars().first()
                 if conversation:
                     return conversation
             
-            # Create new conversation if not found
+            # Create new conversation in database
             new_conversation = ConversationModel(
-                id=conversation_id or str(uuid.uuid4()),
-                user_id=user_id,
-                title=f"Conversation {len(await self._get_user_conversations(user_id, db_session)) + 1}",
+                id=conv_uuid,
+                user_id=user_uuid,
+                organization_id=uuid_lib.UUID("00000000-0000-0000-0000-000000000000"),
+                title="Chat Conversation"
             )
             db_session.add(new_conversation)
             await db_session.commit()
+            
+            logger.info(
+                "Created new conversation in database",
+                conversation_id=str(conv_uuid),
+                user_id=user_id
+            )
+            
             return new_conversation
             
         except Exception as e:

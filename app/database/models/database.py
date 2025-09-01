@@ -52,12 +52,12 @@ class ConversationTable(Base):
     id = Column(UUID(as_uuid=True), primary_key=True)
     user_id = Column(UUID(as_uuid=True), nullable=False)  # No FK constraint - references auth service
     organization_id = Column(UUID(as_uuid=True), nullable=False)  # No FK constraint - references auth service
-    title = Column(String, nullable=False)
-    context = Column(JSON, default={}, name="context_json")
-    meta_data = Column(JSON, default={}, name="metadata_json")
-    status = Column(String, default='active')
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    title = Column(String(500), nullable=True)
+    context = Column(JSON, nullable=False, default={})
+    metadata_json = Column(JSON, nullable=False, default={})
+    status = Column(String(50), nullable=False, default='active')
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default='NOW()')
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default='NOW()')
 
 
 class MessageTable(Base):

@@ -20,7 +20,7 @@ from app.models.api import (
     ChatMessage, ChatRequest, ChatResponse, ChatStreamResponse,
     ConversationStatus, AgentType, MessageType, MessageRole
 )
-from app.database.models.database import Conversation as ConversationTable, Message as MessageTable
+from app.database.models.database import ConversationTable, MessageTable
 from app.database.connection import get_db_session
 from app.core.exceptions import ChatError, ValidationError, RateLimitError
 from app.agents.agent_orchestrator import AgentOrchestrator
@@ -97,7 +97,7 @@ class ChatService:
         conversation_id = str(uuid.uuid4())
         
         # Create conversation in database
-        async with get_db_session() as session:
+        async for session in get_db_session():
             conversation = ConversationTable(
                 id=conversation_id,
                 user_id=user_id,
@@ -183,13 +183,13 @@ class ChatService:
         self.active_conversations[conversation_id].last_activity = datetime.utcnow()
         
         return ChatResponse(
-            conversation_id=uuid.UUID(conversation_id),
-            message_id=uuid.UUID(ai_message_id),
+            conversation_id=str(conversation_id),
+            message_id=str(ai_message_id),
             content=ai_response.response,
             agent_type=ai_response.agent_type,
             created_at=datetime.utcnow(),
             metadata={
-                "user_message_id": user_message_id,
+                "user_message_id": str(user_message_id),
                 "tools_used": ai_response.tools_used,
                 "processing_time": ai_response.processing_time
             }
@@ -259,7 +259,7 @@ class ChatService:
         if not await self._validate_conversation_access(conversation_id, user_id):
             raise ValidationError("Invalid conversation or access denied")
         
-        async with get_db_session() as session:
+        async for session in get_db_session():
             result = await session.execute(
                 select(MessageTable)
                 .where(MessageTable.conversation_id == conversation_id)
@@ -288,7 +288,7 @@ class ChatService:
         Returns:
             List of conversation summaries
         """
-        async with get_db_session() as session:
+        async for session in get_db_session():
             conversations = await session.execute(
                 """
                 SELECT c.*, COUNT(m.id) as message_count
@@ -331,7 +331,7 @@ class ChatService:
             return False
         
         # Update in database
-        async with get_db_session() as session:
+        async for session in get_db_session():
             await session.execute(
                 """
                 UPDATE conversations 
@@ -369,7 +369,7 @@ class ChatService:
             return False
         
         # Update in database
-        async with get_db_session() as session:
+        async for session in get_db_session():
             await session.execute(
                 """
                 UPDATE conversations 
@@ -406,11 +406,11 @@ class ChatService:
             AI response
         """
         # Build conversation context
-        context = await self._build_conversation_context(conversation_id)
+        context = await self._build_conversation_context(conversation_id, user_id)
         
         # Create agent request
         agent_request = AgentRequest(
-            query=message,
+            message=message,
             context={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
@@ -430,22 +430,24 @@ class ChatService:
             processing_time = asyncio.get_event_loop().time() - start_time
             
             return AgentResponse(
-                response=response.response,
-                agent_type=response.agent_type,
-                tools_used=response.tools_used,
+                content=response.response,
+                session_id=str(conversation_id),
+                model_used=response.metadata.get("model_used", "gemini2.0:flash"),
                 metadata={
                     **response.metadata,
                     "processing_time": processing_time,
-                    "conversation_id": conversation_id
+                    "conversation_id": str(conversation_id),
+                    "agent_type": response.agent_type,
+                    "tools_used": response.tools_used
                 }
             )
             
         except Exception as e:
             logging.error(f"Error processing message with AI: {e}")
             return AgentResponse(
-                response="I apologize, but I'm having trouble processing your request. Please try again.",
-                agent_type=AgentType.HELP,
-                tools_used=[],
+                content="I apologize, but I'm having trouble processing your request. Please try again.",
+                session_id=str(conversation_id),
+                model_used="error",
                 metadata={"error": str(e)}
             )
 
@@ -464,11 +466,11 @@ class ChatService:
             Streaming response chunks
         """
         # Build conversation context
-        context = await self._build_conversation_context(conversation_id)
+        context = await self._build_conversation_context(conversation_id, user_id)
         
         # Create agent request
         agent_request = AgentRequest(
-            query=message,
+            message=message,
             context={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
@@ -494,21 +496,30 @@ class ChatService:
             )
             await asyncio.sleep(0.1)
 
-    async def _build_conversation_context(self, conversation_id: str) -> Dict[str, Any]:
+    async def _build_conversation_context(self, conversation_id: str, user_id: str = None) -> Dict[str, Any]:
         """
-        Build comprehensive conversation context
+        Build conversation context for AI processing
         
         Args:
             conversation_id: Target conversation ID
+            user_id: User ID for access validation
             
         Returns:
             Conversation context
         """
-        # Get recent messages
-        messages = await self.get_conversation_history(conversation_id, "system", limit=10)
+        # Get recent messages - use user_id from conversation if not provided
+        if not user_id:
+            # Get user_id from conversation
+            async for session in get_db_session():
+                result = await session.execute(
+                    select(ConversationTable.user_id).where(ConversationTable.id == uuid.UUID(conversation_id))
+                )
+                user_id = str(result.scalar_one_or_none())
+        
+        messages = await self.get_conversation_history(conversation_id, user_id, limit=10)
         
         # Get conversation details
-        async with get_db_session() as session:
+        async for session in get_db_session():
             result = await session.execute(
                 select(ConversationTable).where(ConversationTable.id == conversation_id)
             )
@@ -517,13 +528,13 @@ class ChatService:
         return {
             "messages": [
                 {
-                    "role": "user" if msg.sender != "ai" else "assistant",
+                    "role": msg.role,
                     "content": msg.content,
-                    "timestamp": msg.timestamp.isoformat()
+                    "timestamp": msg.created_at.isoformat() if hasattr(msg, 'created_at') else ""
                 }
                 for msg in messages
             ],
-            "context_data": json.loads(conversation.context_data or "{}") if conversation else {},
+            "context_data": conversation.context if conversation else {},
             "user_preferences": {}  # Could load from user profile
         }
 
@@ -545,12 +556,12 @@ class ChatService:
         """
         message_id = uuid.uuid4()
         
-        async with get_db_session() as session:
+        async for session in get_db_session():
             message = MessageTable(
-                id=message_id,
-                conversation_id=uuid.UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id,
-                user_id=None if sender == "assistant" else (uuid.UUID(sender) if isinstance(sender, str) and len(sender) == 36 else None),
-                role=sender,
+                id=str(message_id),
+                conversation_id=str(conversation_id),
+                user_id=None if sender == "assistant" else str(sender),
+                role="assistant" if sender == "assistant" else "user",
                 content=content,
                 meta_data=metadata or {},
                 created_at=datetime.utcnow()
@@ -587,7 +598,7 @@ class ChatService:
         
         # Check database
         try:
-            async with get_db_session() as session:
+            async for session in get_db_session():
                 # Convert string IDs to UUID for database query
                 conv_uuid = uuid.UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id
                 result = await session.execute(
@@ -595,9 +606,15 @@ class ChatService:
                 )
                 conversation_user_id = result.scalar_one_or_none()
                 
-                # Convert user_id to string for comparison if needed
                 if conversation_user_id:
-                    return str(conversation_user_id) == str(user_id)
+                    # Convert user_id to UUID using same logic as conversation creation
+                    try:
+                        user_uuid = uuid.UUID(user_id)
+                    except ValueError:
+                        # If user_id is not a valid UUID, generate same UUID as in conversation creation
+                        user_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, user_id)
+                    
+                    return conversation_user_id == user_uuid
                 return False
         except Exception as e:
             logging.error(f"Error validating conversation access: {e}")
@@ -643,7 +660,7 @@ class ChatService:
         Returns:
             List of conversation IDs
         """
-        async with get_db_session() as session:
+        async for session in get_db_session():
             result = await session.execute(
                 select(ConversationTable.id).where(ConversationTable.user_id == user_id)
             )

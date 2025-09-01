@@ -77,4 +77,13 @@ class BaseMessageHandler(ABC):
             status_code=status_code,
             **additional_data
         )
-        await websocket.send_json(error.dict())
+        import json
+        from datetime import datetime
+        
+        def json_encoder(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
+        error_dict = error.dict()
+        await websocket.send_text(json.dumps(error_dict, default=json_encoder))

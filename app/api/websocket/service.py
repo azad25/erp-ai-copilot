@@ -251,7 +251,7 @@ class WebSocketService:
                         raise InvalidMessageFormat(f"Unsupported message type: {message_type}")
                     
                     # Process the message with the handler
-                    async with get_db_session() as db_session:
+                    async for db_session in get_db_session():
                         handler = handler_class(self.connection_manager)
                         await handler.handle(
                             websocket=websocket,
@@ -292,7 +292,7 @@ class WebSocketService:
                     exc_info=True
                 )
                 
-                if not websocket.client_state.is_disconnected:
+                if websocket.client_state.value != 3:  # 3 = DISCONNECTED state
                     await self._send_error(
                         websocket,
                         str(e),
