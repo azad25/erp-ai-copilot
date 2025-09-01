@@ -174,8 +174,8 @@ class ChatService:
         
         # Store AI response
         ai_message_id = await self._store_message(
-            conversation_id, "ai", ai_response.response, MessageType.AI_RESPONSE,
-            {"agent_type": ai_response.agent_type, "tools_used": ai_response.tools_used}
+            conversation_id, "assistant", ai_response.content, MessageType.TEXT,
+            {"model_used": ai_response.model_used, "tokens_used": ai_response.tokens_used}
         )
         
         # Update conversation context
@@ -185,13 +185,13 @@ class ChatService:
         return ChatResponse(
             conversation_id=str(conversation_id),
             message_id=str(ai_message_id),
-            content=ai_response.response,
-            agent_type=ai_response.agent_type,
+            content=ai_response.content,
+            agent_type=None,
             created_at=datetime.utcnow(),
             metadata={
                 "user_message_id": str(user_message_id),
-                "tools_used": ai_response.tools_used,
-                "processing_time": ai_response.processing_time
+                "model_used": ai_response.model_used,
+                "tokens_used": ai_response.tokens_used
             }
         )
 
@@ -430,15 +430,13 @@ class ChatService:
             processing_time = asyncio.get_event_loop().time() - start_time
             
             return AgentResponse(
-                content=response.response,
+                content=response.content,
                 session_id=str(conversation_id),
                 model_used=response.metadata.get("model_used", "gemini2.0:flash"),
                 metadata={
                     **response.metadata,
                     "processing_time": processing_time,
-                    "conversation_id": str(conversation_id),
-                    "agent_type": response.agent_type,
-                    "tools_used": response.tools_used
+                    "conversation_id": str(conversation_id)
                 }
             )
             
@@ -485,7 +483,7 @@ class ChatService:
         response = await self._process_message_with_ai(conversation_id, user_id, message, metadata)
         
         # Simulate streaming
-        words = response.response.split()
+        words = response.content.split()
         for i, word in enumerate(words):
             yield ChatStreamResponse(
                 type="chunk",

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 import uuid
 import json
 import logging
+from datetime import datetime
 
 from fastapi import WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,21 +81,24 @@ class ChatMessageHandler(BaseMessageHandler):
                 metadata=metadata
             )
             
-            # Create and send the response
-            chat_response = WebSocketChatResponse(
-                message_id=message_id,
-                conversation_id=conversation.id,
-                sender_id=user.id,
-                content=response.content,
-                status="success",
-                metadata={
-                    "response_id": getattr(response, 'message_id', response.session_id),
-                    "agent_type": response.metadata.get("agent_type", "unknown"),
-                    **response.metadata
+            # Create and send the response as a simple dict
+            response_data = {
+                "type": "chat_response",
+                "status": "success",
+                "message_id": str(getattr(response, 'message_id', uuid.uuid4())),
+                "conversation_id": str(conversation.id),
+                "sender_id": str(user.id),
+                "content": response.content,
+                "timestamp": datetime.utcnow().isoformat(),
+                "data": {},
+                "metadata": {
+                    "response_id": str(getattr(response, 'message_id', response.conversation_id)),
+                    "model_used": str(response.metadata.get("model_used", "unknown")),
+                    "tokens_used": response.metadata.get("tokens_used", 0)
                 }
-            )
+            }
             
-            await websocket.send_json(chat_response.dict())
+            await websocket.send_json(response_data)
             
         except Exception as e:
             logger.error(

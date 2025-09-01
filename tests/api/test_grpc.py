@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from app.api.grpc import AICopilotServicerImpl, start_grpc_server, stop_grpc_server
+from app.agents.base_agent import AgentResponse
 from app.proto.ai_copilot_pb2 import ChatRequest, ChatResponse, HealthCheckRequest
 
 
@@ -43,12 +44,15 @@ async def test_chat_success(mock_master_agent, mock_grpc_context):
     )
     
     # Mock agent response
-    mock_master_agent.process_message.return_value = {
-        "content": "Hello, how can I help you?",
-        "message_id": "msg789",
-        "metadata": "{}",
-        "suggested_actions": "[]"
-    }
+    mock_master_agent.process_message.return_value = AgentResponse(
+        content="Hello, how can I help you?",
+        session_id="conv123",
+        model_used="test-model",
+        metadata={
+            "message_id": "msg789",
+            "suggested_actions": []
+        }
+    )
     
     # Execute
     response = await servicer.Chat(request, mock_grpc_context)
@@ -116,9 +120,24 @@ async def test_stream_chat_success(mock_master_agent, mock_grpc_context):
     
     # Mock streaming response
     async def mock_stream():
-        yield {"content": "Hello", "message_id": "msg1"}
-        yield {"content": ", how", "message_id": "msg1"}
-        yield {"content": " can I help you?", "message_id": "msg1"}
+        yield AgentResponse(
+            content="Hello",
+            session_id="conv123",
+            model_used="test-model",
+            metadata={"message_id": "msg1"}
+        )
+        yield AgentResponse(
+            content=", how",
+            session_id="conv123",
+            model_used="test-model",
+            metadata={"message_id": "msg1"}
+        )
+        yield AgentResponse(
+            content=" can I help you?",
+            session_id="conv123",
+            model_used="test-model",
+            metadata={"message_id": "msg1"}
+        )
     
     mock_master_agent.process_stream_message.return_value = mock_stream()
     
