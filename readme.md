@@ -1,15 +1,16 @@
 # UNIBASE ERP AI Copilot Service
 
-A sophisticated, enterprise-grade AI copilot service designed to integrate seamlessly with existing ERP infrastructure, providing intelligent assistance across all business modules.
+A sophisticated, enterprise-grade AI copilot service with robust WebSocket support, designed to integrate seamlessly with existing ERP infrastructure, providing intelligent assistance across all business modules.
 
 ## 🚀 Features
 
 ### Core Capabilities
 - **Multi-Agent Architecture**: Specialized agents for different business functions
-- **Real-time Chat**: WebSocket-based conversational interface
+- **Real-time Chat**: Robust WebSocket-based conversational interface with production-ready proxy
 - **RAG System**: Advanced retrieval-augmented generation with Qdrant integration
 - **Multi-Model Support**: OpenAI, Anthropic, and local Ollama models
-- **Enterprise Security**: RBAC integration with existing auth systems
+- **Enterprise Security**: RBAC integration with JWT and gRPC auth service fallback
+- **Token Caching**: Redis-based token validation with 30-minute TTL
 - **Scalable Design**: Microservice architecture with async support
 
 ### Agent Types
@@ -35,6 +36,8 @@ A sophisticated, enterprise-grade AI copilot service designed to integrate seaml
 | **RAG System** | ✅ Complete | 100% |
 | **REST API** | ✅ Complete | 100% |
 | **WebSocket API** | ✅ Complete | 100% |
+| **WebSocket Proxy** | ✅ Complete | 100% |
+| **Token Caching** | ✅ Complete | 100% |
 | **Database Layer** | ✅ Complete | 100% |
 | **Security Framework** | ✅ Complete | 100% |
 | **Tool System** | ✅ Complete | 100% |
@@ -94,11 +97,13 @@ A sophisticated, enterprise-grade AI copilot service designed to integrate seaml
 
 ### Backend
 - **Python 3.11+**: Modern Python with async support
-- **FastAPI**: High-performance web framework
+- **FastAPI**: High-performance web framework with WebSocket support
 - **SQLAlchemy**: Database ORM with async support
 - **Motor**: Async MongoDB driver
-- **Redis**: Caching and session management
+- **Redis**: Token caching and rate limiting
 - **Qdrant**: Vector database for RAG system
+- **gRPC**: High-performance service communication
+- **WebSockets**: Real-time bidirectional communication
 
 ### AI/ML
 - **OpenAI GPT-4**: Cloud-based language models
@@ -141,7 +146,10 @@ cp .env.example .env
 ### 3. Start Infrastructure
 ```bash
 # Start the required infrastructure services
-docker-compose -f ../erp-suit-infrastructure/docker-compose.yml up -d postgres redis mongodb qdrant kafka
+docker-compose -f ../erp-suite-infrastructure/docker-compose.yml up -d postgres redis mongodb qdrant kafka
+
+# Verify Redis is running (for token caching)
+redis-cli ping
 ```
 
 ### 4. Initialize Databases
@@ -175,6 +183,20 @@ celery -A app.core.celery_app worker --loglevel=info
 # Start Celery beat (scheduler)
 celery -A app.core.celery_app beat --loglevel=info
 ```
+
+## 🌟 Recent Updates
+
+### WebSocket & Authentication Improvements
+- **Fixed WebSocket Proxy**: Completely rewrote WebSocket proxy implementation for reliable message forwarding
+- **Token Caching**: Implemented Redis-based token validation with 30-minute TTL
+- **Fallback Authentication**: Added JWT fallback when gRPC auth service is unavailable
+- **Connection Management**: Improved WebSocket connection handling and error recovery
+- **Performance**: Reduced authentication load with token caching
+
+### Monitoring & Observability
+- Added Prometheus metrics for WebSocket connections
+- Enhanced logging for better debugging
+- Connection health monitoring
 
 ## 📖 Documentation
 
@@ -351,10 +373,12 @@ curl http://localhost:8080/health/detailed
 
 ## 🔐 Security
 
-### Authentication
-- JWT token-based authentication
-- Integration with existing auth service
-- Role-based access control (RBAC)
+### Authentication & Security
+- **Token Validation**: JWT-based authentication with gRPC fallback
+- **Token Caching**: Redis-based caching with 30-minute TTL
+- **WebSocket Security**: Robust connection management with proper authentication flow
+- **Rate Limiting**: Built-in protection against abuse
+- **Role-based Access Control**: Fine-grained permissions system (RBAC)
 
 ### Data Protection
 - Encryption at rest and in transit
