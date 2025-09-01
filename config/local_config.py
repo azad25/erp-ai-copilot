@@ -4,11 +4,16 @@ Local configuration for testing with local Ollama installation
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Set environment variables for local testing
+# Load .env file first
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+
+# Set environment variables for local testing (only if not already set in .env)
 os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
-os.environ.setdefault("DEFAULT_LLM_PROVIDER", "ollama")
-os.environ.setdefault("DEFAULT_MODEL", "unibase-erp")
+os.environ.setdefault("DEFAULT_LLM_PROVIDER", "gemini")  # Use gemini from .env
+os.environ.setdefault("DEFAULT_MODEL", "gemini2.0:flash")  # Use gemini model from .env
 os.environ.setdefault("LOG_LEVEL", "debug")
 os.environ.setdefault("ENVIRONMENT", "development")
 
@@ -31,8 +36,8 @@ API_CONFIG = {
 
 # LLM configuration
 LLM_CONFIG = {
-    "default_provider": "ollama",
-    "default_model": "unibase-erp",
+    "default_provider": "gemini",
+    "default_model": "gemini2.0:flash",
     "ollama": {
         "base_url": "http://localhost:11434",
         "timeout": 60,

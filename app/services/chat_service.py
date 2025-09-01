@@ -411,6 +411,7 @@ class ChatService:
         # Create agent request
         agent_request = AgentRequest(
             message=message,
+            conversation_id=str(conversation_id),
             context={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
@@ -441,7 +442,8 @@ class ChatService:
             )
             
         except Exception as e:
-            logging.error(f"Error processing message with AI: {e}")
+            logging.error(f"Error processing message with AI: {e}", exc_info=True)
+            print(f"DEBUG: LLM Service Error - {type(e).__name__}: {str(e)}")
             return AgentResponse(
                 content="I apologize, but I'm having trouble processing your request. Please try again.",
                 session_id=str(conversation_id),
@@ -469,6 +471,7 @@ class ChatService:
         # Create agent request
         agent_request = AgentRequest(
             message=message,
+            conversation_id=str(conversation_id),
             context={
                 "conversation_id": conversation_id,
                 "user_id": user_id,

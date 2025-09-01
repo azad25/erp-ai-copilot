@@ -139,17 +139,19 @@ class MasterAgent(BaseAgent):
             # Use LLM for intelligent orchestration
             orchestration_prompt = self._build_orchestration_prompt(request)
             
-            # Use model from request metadata if available, otherwise default to gpt-4
-            model = request.metadata.get("model", "gpt-4")
-            llm_request = {
-                "messages": [{"role": "user", "content": orchestration_prompt}],
-                "model": model,
-                "max_tokens": 500,
-                "temperature": 0.3
-            }
+            # Use model from request metadata if available, otherwise default to gemini
+            model = request.metadata.get("model", "gemini")
+            
+            from app.services.llm_service import LLMRequest, LLMMessage
+            llm_request = LLMRequest(
+                messages=[LLMMessage(role="user", content=orchestration_prompt)],
+                model=model,
+                max_tokens=500,
+                temperature=0.3
+            )
             
             response = await self.llm_service.generate(llm_request)
-            orchestration_plan = self._parse_orchestration_response(response["content"])
+            orchestration_plan = self._parse_orchestration_response(response.content)
             
             # Execute based on orchestration plan
             if orchestration_plan["strategy"] == "single_agent":

@@ -24,6 +24,7 @@ class AgentRequest(BaseModel):
     message: str = Field(..., description="User message")
     context: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Session identifier")
+    conversation_id: Optional[str] = Field(default=None, description="Conversation identifier")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 

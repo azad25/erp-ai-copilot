@@ -183,6 +183,18 @@ For complex queries, break down the response into:
             }
         ]
 
+    async def execute(self, request: AgentRequest) -> AgentResponse:
+        """
+        Execute query agent functionality
+        
+        Args:
+            request: AgentRequest containing the user's query
+            
+        Returns:
+            AgentResponse with query results and analysis
+        """
+        return await self.process_request(request)
+
     async def process_request(self, request: AgentRequest) -> AgentResponse:
         """
         Process a query request with enhanced query understanding.

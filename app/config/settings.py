@@ -266,7 +266,26 @@ class ServiceSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     """LLM configuration settings."""
     
+    # API Keys
     gemini_api_key: Optional[str] = Field(default=None, env="GEMINI_API_KEY")
+    openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
+    
+    # Provider and Model Configuration
+    default_provider: str = Field(default="gemini", env="DEFAULT_LLM_PROVIDER")
+    default_model: str = Field(default="gemini2.0:flash", env="DEFAULT_MODEL")
+    
+    # Ollama Configuration
+    ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
+    
+    # Generation Parameters
+    max_tokens: int = Field(default=4000, env="LLM_MAX_TOKENS")
+    temperature: float = Field(default=0.7, env="LLM_TEMPERATURE")
+    timeout: int = Field(default=60, env="LLM_TIMEOUT")
+    max_retries: int = Field(default=3, env="LLM_MAX_RETRIES")
+    
+    class Config:
+        env_prefix = "LLM_"
 
 
 class Settings(BaseSettings):
