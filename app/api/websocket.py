@@ -8,6 +8,7 @@ import time
 from typing import Dict, Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from fastapi.responses import HTMLResponse
+from starlette.websockets import WebSocketState
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -20,6 +21,7 @@ from app.database.connection import get_db_session
 from app.database.models.database import Conversation, Message, User, ConversationTable, MessageTable
 from app.models.api import WebSocketMessage, WebSocketChatMessage, WebSocketChatResponse, WebSocketStatusMessage
 from app.core.metrics import WS_CONNECTIONS, WS_MESSAGES, WS_ERRORS
+from app.config.settings import settings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -35,16 +37,37 @@ class ConnectionManager:
     
     async def connect(self, websocket: WebSocket, connection_id: str, user_id: str):
         """Connect a new WebSocket."""
-        await websocket.accept()
-        self.active_connections[connection_id] = websocket
-        self.connection_users[connection_id] = user_id
-        
-        if user_id not in self.user_connections:
-            self.user_connections[user_id] = set()
-        self.user_connections[user_id].add(connection_id)
-        
-        WS_CONNECTIONS.inc()
-        logger.info("WebSocket connected", connection_id=connection_id, user_id=user_id)
+        try:
+            # Only accept if not already accepted
+            if not hasattr(websocket, '_accepted') or not websocket._accepted:
+                await websocket.accept()
+                websocket._accepted = True
+                
+            self.active_connections[connection_id] = websocket
+            self.connection_users[connection_id] = user_id
+            
+            if user_id not in self.user_connections:
+                self.user_connections[user_id] = set()
+            self.user_connections[user_id].add(connection_id)
+            
+            WS_CONNECTIONS.inc()
+            logger.info("WebSocket connected", connection_id=connection_id, user_id=user_id)
+            
+            # Send connection acknowledgment
+            status_message = WebSocketStatusMessage(
+                type="status",
+                status="connected",
+                message="WebSocket connection established",
+                data={"connection_id": connection_id, "user_id": user_id}
+            )
+            await self.send_personal_json(status_message.model_dump(), connection_id)
+            
+        except Exception as e:
+            logger.error("Error in WebSocket connection", 
+                        error=str(e),
+                        connection_id=connection_id,
+                        user_id=user_id)
+            raise
     
     def disconnect(self, connection_id: str):
         """Disconnect a WebSocket."""
@@ -158,37 +181,69 @@ async def websocket_chat(
     import uuid
     from app.database.models.database import User
     from app.services.token_cache_service import validate_token_with_cache
+    from sqlalchemy.ext.asyncio import AsyncSession
     
     connection_id = str(uuid.uuid4())
     user = None
+    db = None
     
     try:
         logger.info("New WebSocket connection attempt", 
-                   connection_id=connection_id,
-                   has_token=bool(token))
+                  connection_id=connection_id,
+                  has_token=bool(token))
         
         if not token:
             logger.warning("No token provided in WebSocket connection")
             await websocket.close(code=1008, reason="Authentication token required")
             return
 
-        # Validate token using cache service
-        user_info = await validate_token_with_cache(token)
-        if not user_info:
-            logger.warning("Token validation failed", 
-                         connection_id=connection_id,
-                         token_start=token[:10] + "..." if token else "None")
-            await websocket.close(code=1008, reason="Invalid or expired token")
+        # Get Redis client and initialize token cache service if needed
+        from app.database.connection import db_manager, get_db_manager
+        from app.services.token_cache_service import get_token_cache_service, initialize_token_cache_service
+        
+        try:
+            # Ensure database manager is initialized
+            db = await get_db_manager()
+            redis_client = await db.get_redis_client()
+            if not get_token_cache_service():
+                initialize_token_cache_service(redis_client)
+            
+            # Validate token using cache service
+            user_info = await validate_token_with_cache(token)
+            if not user_info:
+                logger.warning("Token validation failed", 
+                             connection_id=connection_id,
+                             token_start=token[:10] + "..." if token else "None")
+                await websocket.close(code=1008, reason="Invalid or expired token")
+                return
+                
+        except Exception as e:
+            logger.error("Error initializing token cache service", 
+                       connection_id=connection_id,
+                       error=str(e))
+            await websocket.close(code=1011, reason="Internal server error")
             return
+        
+        # Connection acceptance and status message will be handled by ConnectionManager.connect
         
         # Create user object with data from cached user info
         try:
+            # Get database session
+            db = get_db_session()
+            if not db:
+                logger.error("Failed to get database session", connection_id=connection_id)
+                await websocket.close(code=1011, reason="Internal server error")
+                return
+                
             user = User(
                 id=user_info.get('id'),
                 email=user_info.get('email', 'unknown@example.com'),
                 organization_id=user_info.get('organization_id'),
                 is_active=user_info.get('is_active', False),
-                is_verified=user_info.get('is_verified', False)
+                is_verified=user_info.get('is_verified', False),
+                # Add any additional required fields
+                username=user_info.get('email', '').split('@')[0],
+                full_name=user_info.get('full_name', '')
             )
             logger.info("User authenticated", 
                        connection_id=connection_id, 
@@ -213,60 +268,116 @@ async def websocket_chat(
             await websocket.close(code=1008, reason="User account is not active or not verified")
             return
 
-        # Connect to WebSocket
-        await manager.connect(websocket, connection_id, str(user.id))
-        logger.info("WebSocket connection established", 
-                   connection_id=connection_id,
-                   user_id=user.id)
-        logger.info("WebSocket connection accepted and added to manager", connection_id=connection_id)
-        
-        # Send connection confirmation
-        status_message = WebSocketStatusMessage(
-            type="status",
-            status="connected",
-            message="WebSocket connection established",
-            data={"connection_id": connection_id, "user_id": str(user.id)}
-        )
-        await manager.send_personal_json(status_message.model_dump(), connection_id)
-        logger.info("Connection confirmation sent", connection_id=connection_id)
-        
-        # Handle incoming messages
-        while True:
-            try:
-                # Receive message with timeout to prevent hanging
+        # Connect to WebSocket - this will handle the accept and send initial status
+        try:
+            await manager.connect(websocket, connection_id, str(user.id))
+            logger.info("WebSocket connection established and confirmed", 
+                      connection_id=connection_id,
+                      user_id=user.id)
+            
+            # Handle incoming messages
+            while True:
                 try:
-                    data = await asyncio.wait_for(websocket.receive_text(), timeout=300)  # 5 minute timeout
-                except asyncio.TimeoutError:
-                    logger.info("WebSocket connection timed out", 
-                              connection_id=connection_id,
-                              user_id=user.id)
-                    await websocket.close(code=1001, reason="Connection timeout")
-                    break
-                    break
-                    
-                try:
-                    message_data = json.loads(data)
-                except json.JSONDecodeError as e:
-                    logger.warning("Invalid JSON received", 
-                                 connection_id=connection_id,
-                                 error=str(e))
-                    await manager.send_personal_json(
-                        WebSocketStatusMessage(
-                            type="error",
-                            status="error",
-                            message="Invalid JSON format"
-                        ).model_dump(), 
-                        connection_id
-                    )
-                    continue
-                
-                # Process valid message
-                try:
-                    message_type = message_data.get("type")
-                    if message_type in ["chat_message", "chat"]:
-                        await handle_chat_message(connection_id, user, message_data)
+                    # Receive message with timeout to prevent hanging
+                    try:
+                        data = await asyncio.wait_for(websocket.receive_text(), timeout=300)  # 5 minute timeout
+                        
+                        try:
+                            message_data = json.loads(data)
+                            
+                            # Process valid message
+                            message_type = message_data.get("type")
+                            if message_type == "chat_message":
+                                # Get database session
+                                db = get_db_session()
+                                try:
+                                    db_session = await anext(db)
+                                    await handle_chat_message(connection_id, user, message_data, db_session)
+                                except Exception as e:
+                                    logger.error("Error getting database session", error=str(e))
+                                    raise
+                                finally:
+                                    try:
+                                        await anext(db, None)  # This will run any cleanup in the generator
+                                    except StopAsyncIteration:
+                                        pass
+                            elif message_type == "typing_indicator":
+                                # Handle typing indicator
+                                await manager.broadcast_json(
+                                    WebSocketTypingIndicator(
+                                        type="typing_indicator",
+                                        user_id=user.id,
+                                        is_typing=message_data.get("is_typing", True)
+                                    ).model_dump(),
+                                    exclude_connection_id=connection_id
+                                )
+                            elif message_type == "ping":
+                                # Handle ping/pong for connection keep-alive
+                                await manager.send_personal_json(
+                                    WebSocketStatusMessage(
+                                        type="pong",
+                                        status="ok",
+                                        message="pong"
+                                    ).model_dump(),
+                                    connection_id
+                                )
+                            else:
+                                # Unknown message type
+                                await manager.send_personal_json(
+                                    WebSocketStatusMessage(
+                                        type="error",
+                                        status="error",
+                                        message="Invalid message type"
+                                    ).model_dump(), 
+                                    connection_id
+                                )
+                                
+                        except json.JSONDecodeError as e:
+                            logger.warning("Invalid JSON received", 
+                                         connection_id=connection_id,
+                                         error=str(e))
+                            await manager.send_personal_json(
+                                WebSocketStatusMessage(
+                                    type="error",
+                                    status="error",
+                                    message="Invalid JSON format"
+                                ).model_dump(), 
+                                connection_id
+                            )
+                            continue
+                            
+                    except asyncio.TimeoutError:
+                        logger.info("WebSocket connection timed out", 
+                                  connection_id=connection_id,
+                                  user_id=user.id)
+                        await websocket.close(code=1001, reason="Connection timeout")
+                        break
+                    if message_type == "chat_message":
+                        # Get database session
+                        db = get_db_session()
+                        try:
+                            db_session = await anext(db)
+                            await handle_chat_message(connection_id, user, message_data, db_session)
+                        except Exception as e:
+                            logger.error("Error getting database session", error=str(e))
+                            raise
+                        finally:
+                            try:
+                                await anext(db, None)  # This will run any cleanup in the generator
+                            except StopAsyncIteration:
+                                pass
+                    elif message_type == "typing_indicator":
+                        # Handle typing indicator
+                        await manager.broadcast_json(
+                            WebSocketTypingIndicator(
+                                type="typing_indicator",
+                                user_id=user.id,
+                                is_typing=message_data.get("is_typing", True)
+                            ).model_dump(),
+                            exclude_connection_id=connection_id
+                        )
                     elif message_type == "ping":
-                        # Handle ping for keep-alive
+                        # Handle ping/pong for connection keep-alive
                         await manager.send_personal_json(
                             WebSocketStatusMessage(
                                 type="pong",
@@ -281,76 +392,131 @@ async def websocket_chat(
                             WebSocketStatusMessage(
                                 type="error",
                                 status="error",
-                                message="Unknown message type",
-                                data={"received_type": message_type}
-                            ).model_dump(),
+                                message="Invalid JSON format"
+                            ).model_dump(), 
                             connection_id
                         )
-                except Exception as e:
-                    logger.error("Error processing message", 
-                               connection_id=connection_id, 
-                               error=str(e), 
-                               exc_info=True)
-                    WS_ERRORS.labels(error_type="processing").inc()
+                        continue
                     
-                    # Try to send error message to client
-                    try:
-                        await manager.send_personal_json(
-                            WebSocketStatusMessage(
-                                type="error",
-                                status="error",
-                                message="Error processing message"
-                            ).model_dump(),
-                            connection_id
-                        )
-                    except Exception as send_error:
-                        logger.error("Failed to send error message to client",
-                                   connection_id=connection_id,
-                                   error=str(send_error))
-                        break  # Exit if we can't send error messages
-                
-            except WebSocketDisconnect:
-                logger.info("WebSocket disconnected normally", 
-                          connection_id=connection_id, 
-                          user_id=str(user.id) if user else None)
-                break
-                
-            except RuntimeError as e:
-                if "Cannot call" in str(e) and "disconnect" in str(e):
-                    logger.info("WebSocket disconnected (runtime)", 
-                              connection_id=connection_id,
-                              error=str(e))
-                else:
-                    logger.error("WebSocket runtime error", 
+                    # Process valid message
+                    logger.debug("Message processed successfully",
                                connection_id=connection_id,
-                               error=str(e),
+                               user_id=user.id)
+                    
+                except json.JSONDecodeError as je:
+                    error_msg = f"Invalid JSON format: {str(je)}"
+                    logger.warning("Invalid message format", 
+                                 connection_id=connection_id,
+                                 message=data[:100],
+                                 error=error_msg)
+                    error_message = WebSocketStatusMessage(
+                        type="error",
+                        status="error",
+                        message=error_msg,
+                        details={"error_type": "invalid_json"} if settings.service.debug else None
+                    )
+                    await manager.send_personal_json(error_message.model_dump(), connection_id)
+                    
+                except Exception as e:
+                    error_msg = f"Error processing message: {str(e)}"
+                    logger.error("Error in WebSocket handler", 
+                               connection_id=connection_id,
+                               error=error_msg,
                                exc_info=True)
-                break
-                
-            except Exception as e:
-                logger.error("Unexpected WebSocket error", 
-                           connection_id=connection_id,
-                           error=str(e),
-                           exc_info=True)
-                WS_ERRORS.labels(error_type="unexpected").inc()
-                break
-                
+                    
+                    # Prepare error response
+                    error_details = {
+                        "error_type": type(e).__name__,
+                        "message": str(e)
+                    }
+                    
+                    if settings.service.debug:
+                        import traceback
+                        error_details["traceback"] = traceback.format_exc()
+                        logger.error("Error details",
+                                   connection_id=connection_id,
+                                   error_details=error_details)
+                    
+                    # Close connection on critical errors
+                    if not isinstance(e, (WebSocketDisconnect, json.JSONDecodeError, ValueError)):
+                        try:
+                            await websocket.close(code=1011, reason="Internal server error")
+                            break
+                        except Exception as close_error:
+                            logger.error("Error closing WebSocket", error=str(close_error))
+                            break
+                            
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected", connection_id=connection_id, user_id=user.id)
+        except Exception as e:
+            logger.error("WebSocket connection error", 
+                       connection_id=connection_id,
+                       user_id=user.id,
+                       error=str(e),
+                       exc_info=True)
+        finally:
+            # Ensure proper cleanup on disconnection
+            manager.disconnect(connection_id)
+            logger.info("WebSocket connection closed", 
+                      connection_id=connection_id,
+                      user_id=user.id)
+                        
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected", connection_id=connection_id)
+        return
+        
     except Exception as e:
-        logger.error("Fatal WebSocket error", 
-                   connection_id=connection_id,
+        logger.error("WebSocket connection error", 
+                   connection_id=connection_id, 
                    error=str(e),
                    exc_info=True)
-        WS_ERRORS.labels(error_type="fatal").inc()
-        
+        if 'websocket' in locals() and websocket.client_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.close(code=1011, reason=f"Server error: {str(e)}")
+            except Exception as close_error:
+                logger.error("Error closing WebSocket", error=str(close_error))
+        return
+
     finally:
-        # Ensure cleanup happens even if an exception occurred
-        if connection_id in manager.active_connections:
-            manager.disconnect(connection_id)
-            logger.info("WebSocket connection cleaned up", connection_id=connection_id)
+        # Clean up resources
+        try:
+            if 'connection_id' in locals() and connection_id in manager.active_connections:
+                manager.disconnect(connection_id)
+                logger.info("Disconnected WebSocket connection", connection_id=connection_id)
+                
+            if 'db' in locals() and db is not None:
+                if hasattr(db, 'close'):
+                    if asyncio.iscoroutinefunction(db.close):
+                        await db.close()
+                    else:
+                        db.close()
+                logger.debug("Closed database session", connection_id=connection_id)
+                
+        except Exception as cleanup_error:
+            logger.error("Error during WebSocket cleanup",
+                       connection_id=connection_id,
+                       error=str(cleanup_error))
+        
+        logger.info("WebSocket connection closed", 
+                   connection_id=connection_id,
+                   user_id=user.id if 'user' in locals() and user else None)
 
 
-async def handle_chat_message(connection_id: str, user: User, message_data: dict):
-    """Handle incoming chat messages."""
+async def handle_chat_message(connection_id: str, user: User, message_data: dict, db_session = None):
+    """Handle incoming chat messages with an optional database session.
+    
+    Args:
+        connection_id: Unique ID for the WebSocket connection
+        user: Authenticated user object
+        message_data: Dictionary containing message data
+        db_session: Optional SQLAlchemy async session. If not provided, a new one will be created.
+    
+    Returns:
+        bool: True if message was processed successfully, False otherwise
+    """
+    db = None
+    should_close_session = False
+    
     try:
         # Extract message data - handle both direct message and nested data structure
         conversation_id = message_data.get("conversation_id") or message_data.get("data", {}).get("conversation_id")
@@ -359,6 +525,7 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
         # Log the message data for debugging
         logger.info("Processing chat message", 
                    connection_id=connection_id,
+                   user_id=user.id,
                    message_type=message_data.get("type"),
                    has_message=bool(message_content),
                    message_keys=list(message_data.keys()))
@@ -370,10 +537,27 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
                 message="Message content is required"
             )
             await manager.send_personal_json(error_message.model_dump(), connection_id)
-            return
+            return False
+            
+        # Get database session if not provided
+        if db_session:
+            db = db_session
+        else:
+            db = get_db_session()
+            should_close_session = True
+            
+        if not db:
+            logger.error("Failed to get database session", connection_id=connection_id)
+            error_message = WebSocketStatusMessage(
+                type="error",
+                status="error",
+                message="Database connection error"
+            )
+            await manager.send_personal_json(error_message.model_dump(), connection_id)
+            return False
         
         # Get or create conversation
-        async with get_db_session() as db:
+        try:
             if conversation_id:
                 # Verify conversation belongs to user
                 result = await db.execute(
@@ -393,37 +577,71 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
                         message="Conversation not found"
                     )
                     await manager.send_personal_json(error_message.model_dump(), connection_id)
-                    return
+                    return False
             else:
                 # Create new conversation
                 conversation_id = uuid.uuid4()
                 conversation = ConversationTable(
                     id=conversation_id,
-                    organization_id=uuid.UUID(user.organization_id) if isinstance(user.organization_id, str) else user.organization_id,
-                    user_id=uuid.UUID(user.id) if isinstance(user.id, str) else user.id,
+                    organization_id=user.organization_id,
+                    user_id=user.id,
                     title=message_content[:100] + "..." if len(message_content) > 100 else message_content,
                     context={},
                     meta_data={"source": "websocket"}
                 )
                 db.add(conversation)
                 await db.flush()  # Get the ID without committing
+                
+                logger.info("Created new conversation",
+                          connection_id=connection_id,
+                          conversation_id=conversation_id,
+                          user_id=user.id)
             
-            # Generate AI response using ChatService (handles message storage internally)
-            try:
-                logger.info("Creating ChatService instance", connection_id=connection_id)
-                chat_service = ChatService()
-                logger.info("ChatService created, sending message", connection_id=connection_id)
-                response = await chat_service.send_message(
-                    conversation_id=str(conversation_id),
-                    user_id=user.id,
-                    message=message_content
-                )
-                logger.info("ChatService response received", connection_id=connection_id, response_type=type(response))
-            except Exception as chat_error:
-                logger.error("ChatService error", connection_id=connection_id, error=str(chat_error), exc_info=True)
-                raise
+        except Exception as db_error:
+            logger.error("Database operation failed", 
+                       connection_id=connection_id, 
+                       error=str(db_error),
+                       exc_info=True)
+            error_message = WebSocketStatusMessage(
+                type="error",
+                status="error",
+                message="Database operation failed",
+                details={"error": str(db_error)} if settings.service.debug else None
+            )
+            await manager.send_personal_json(error_message.model_dump(), connection_id)
+            return False
+        
+        # Generate AI response using ChatService (handles message storage internally)
+        try:
+            logger.info("Creating ChatService instance", 
+                      connection_id=connection_id,
+                      conversation_id=conversation_id)
             
-            # Send response back to user (ChatService already stores the AI message)
+            # Initialize ChatService with database session
+            chat_service = ChatService(db)
+            logger.info("ChatService created, processing message", 
+                      connection_id=connection_id,
+                      message_length=len(message_content))
+            
+            # Process the message
+            response = await chat_service.send_message(
+                conversation_id=conversation_id,
+                user_id=user.id,
+                message=message_content
+            )
+            
+            if not response or not hasattr(response, 'message_id'):
+                logger.error("Invalid response from ChatService",
+                           connection_id=connection_id,
+                           response=repr(response)[:500])
+                raise ValueError("Invalid response from ChatService")
+                
+            logger.info("ChatService response received", 
+                      connection_id=connection_id, 
+                      response_type=type(response).__name__,
+                      message_id=response.message_id)
+            
+            # Send response back to user
             chat_response = WebSocketChatResponse(
                 type="chat_response",
                 conversation_id=conversation_id,
@@ -437,28 +655,72 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
             
             await manager.send_personal_json(chat_response.model_dump(), connection_id)
             
-            # Update conversation title if needed
+            # Update conversation title if this is a new conversation
             if not conversation.title or conversation.title.startswith("..."):
                 conversation.title = message_content[:100] + "..." if len(message_content) > 100 else message_content
             
+            # Commit all changes
             await db.commit()
             
             logger.info(
-                "WebSocket chat response generated",
+                "Successfully processed chat message",
                 connection_id=connection_id,
-                conversation_id=str(conversation_id),
-                user_id=str(user.id)
+                conversation_id=conversation_id,
+                user_id=user.id
             )
+            
+            return True
+            
+        except Exception as chat_error:
+            await db.rollback()
+            logger.error("ChatService error", 
+                       connection_id=connection_id, 
+                       error=str(chat_error), 
+                       exc_info=True)
+            raise
             
     except Exception as e:
         WS_ERRORS.labels(error_type="chat_handler").inc()
-        logger.error("Failed to handle chat message", error=str(e), exc_info=True)
-        error_message = WebSocketStatusMessage(
-            type="error",
-            status="error",
-            message="Failed to process message"
-        )
-        await manager.send_personal_json(error_message.model_dump(), connection_id)
+        error_msg = str(e)
+        logger.error("Failed to handle chat message", 
+                    connection_id=connection_id,
+                    error=error_msg, 
+                    exc_info=True)
+        
+        try:
+            # Provide more detailed error message in development
+            if settings.service.debug:
+                error_details = f"{type(e).__name__}: {error_msg}"
+            else:
+                error_details = "An error occurred while processing your message"
+                
+            error_message = WebSocketStatusMessage(
+                type="error",
+                status="error",
+                message=error_details,
+                details={
+                    "error_type": type(e).__name__,
+                    "request_id": connection_id
+                } if settings.service.debug else None
+            )
+            await manager.send_personal_json(error_message.model_dump(), connection_id)
+        except Exception as send_error:
+            logger.error("Failed to send error response",
+                       connection_id=connection_id,
+                       error=str(send_error))
+        
+        return False
+        
+    finally:
+        # Ensure database session is properly closed if we created it
+        try:
+            if db and should_close_session:
+                await db.close()
+                logger.debug("Closed database session", connection_id=connection_id)
+        except Exception as close_error:
+            logger.error("Error closing database session",
+                       connection_id=connection_id,
+                       error=str(close_error))
 
 
 @router.get("/status")

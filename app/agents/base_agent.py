@@ -14,7 +14,7 @@ import uuid
 import structlog
 from pydantic import BaseModel, Field
 
-from app.services.llm_service import llm_service, LLMRequest, LLMMessage, LLMResponse
+from app.services.llm_service import get_llm_service, LLMRequest, LLMMessage, LLMResponse
 from app.core.exceptions import AgentError, AIModelError
 from app.core.cache_manager import CacheManager
 
@@ -64,13 +64,14 @@ class BaseAgent(ABC):
         llm_service=None,
         system_prompt: Optional[str] = None,
         max_tokens: int = 4000,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        model: str = "gemini"
     ):
         self.name = name
+        self.model = model
         
         # Use provided LLM service or get the global instance
         if llm_service is None:
-            from app.services.llm_service import get_llm_service
             self.llm_service = get_llm_service()
         else:
             self.llm_service = llm_service
@@ -126,10 +127,17 @@ class BaseAgent(ABC):
             # Get model from request metadata or use instance model
             model = request.metadata.get("model", self.model)
             
+            # Check if LLM service is available
+            if not self.llm_service:
+                raise AIModelError(
+                    "unknown", model,
+                    "LLM service not initialized. Please check service configuration."
+                )
+            
             # Validate model availability
-            available_models = llm_service.get_available_models()
-            provider = llm_service.get_provider_for_model(model)
+            provider = self.llm_service.get_provider_for_model(model)
             if not provider:
+                available_models = self.llm_service.get_available_models()
                 raise AIModelError(
                     "unknown", model,
                     f"Model {model} not available. "
@@ -157,7 +165,7 @@ class BaseAgent(ABC):
             )
 
             # Generate response
-            response = await llm_service.generate(llm_request)
+            response = await self.llm_service.generate(llm_request)
             
             # Update memory
             self._update_memory(memory, request.message, response.content)
@@ -209,7 +217,7 @@ class BaseAgent(ABC):
             model = request.metadata.get("model", self.model)
             
             # Validate model availability
-            provider = llm_service.get_provider_for_model(model)
+            provider = self.llm_service.get_provider_for_model(model)
             if not provider:
                 raise AIModelError("unknown", model, f"Model {model} not available")
 
@@ -237,7 +245,7 @@ class BaseAgent(ABC):
             full_response = []
             
             # Generate streaming response
-            async for chunk in llm_service.generate_stream(llm_request):
+            async for chunk in self.llm_service.generate_stream(llm_request):
                 full_response.append(chunk)
                 yield chunk
 
@@ -322,11 +330,11 @@ class BaseAgent(ABC):
                 "model": self.model,
                 "stats": self._stats
             },
-            "llm_service": await llm_service.health_check()
+            "llm_service": await self.llm_service.health_check()
         }
 
         # Check if current model is available
-        provider = llm_service.get_provider_for_model(self.model)
+        provider = self.llm_service.get_provider_for_model(self.model)
         if not provider:
             health["agent"]["status"] = "error"
             health["agent"]["error"] = f"Model {self.model} not available"

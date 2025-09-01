@@ -12,13 +12,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.config.settings import get_settings
+from app.core.config import settings
 from app.database.connection import get_db_session
 from app.clients.auth_grpc import get_auth_service_client
 from app.services.token_cache_service import validate_token_with_cache
 from app.models.api import User
-
-settings = get_settings()
 security = HTTPBearer()
 
 

@@ -53,8 +53,8 @@ class ConversationTable(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False)  # No FK constraint - references auth service
     organization_id = Column(UUID(as_uuid=True), nullable=False)  # No FK constraint - references auth service
     title = Column(String, nullable=False)
-    context = Column(JSON, default={})
-    meta_data = Column("metadata_json", JSON, default={})
+    context = Column(JSON, default={}, name="context_json")
+    meta_data = Column(JSON, default={}, name="metadata_json")
     status = Column(String, default='active')
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -69,7 +69,7 @@ class MessageTable(Base):
     user_id = Column(UUID(as_uuid=True), nullable=True)  # No FK constraint - references auth service
     role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
-    meta_data = Column("metadata_json", JSON, default={})  # Map to 'metadata' column in DB
+    meta_data = Column(JSON, default={}, name="metadata_json")  # Map to 'metadata_json' column in DB
     tokens_used = Column(Integer, default=0)
     model_used = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

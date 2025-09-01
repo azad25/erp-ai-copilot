@@ -5,7 +5,8 @@ database connections, vector store settings, embedding model settings, and
 caching parameters.
 """
 
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from typing import Optional, Dict, Any, List
 
 
@@ -78,11 +79,11 @@ class RAGSettings(BaseSettings):
         env="RAG_DEFAULT_COLLECTIONS"
     )
     
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False
+    }
 
 
 def get_rag_settings() -> RAGSettings:

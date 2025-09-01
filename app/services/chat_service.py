@@ -11,18 +11,17 @@ import json
 import logging
 from datetime import datetime, timedelta
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 from sqlalchemy.future import select
 from sqlalchemy import and_, desc
 
 from app.models.api import (
     ChatMessage, ChatRequest, ChatResponse, ChatStreamResponse,
-    ConversationStatus, AgentType, MessageType
+    ConversationStatus, AgentType, MessageType, MessageRole
 )
-from app.models.database import Conversation, Message
-from app.database.models.database import ConversationTable, MessageTable
-from app.database.db import get_db_session
+from app.database.models.database import Conversation as ConversationTable, Message as MessageTable
+from app.database.connection import get_db_session
 from app.core.exceptions import ChatError, ValidationError, RateLimitError
 from app.agents.agent_orchestrator import AgentOrchestrator
 from app.agents.base_agent import AgentRequest, AgentResponse
@@ -33,10 +32,11 @@ class ConversationContext:
     """Conversation context for maintaining state"""
     conversation_id: str
     user_id: str
-    context_data: Dict[str, Any]
-    last_activity: datetime
-    message_count: int
-    active_agents: List[str]
+    context_data: Dict[str, Any] = field(default_factory=dict)
+    last_activity: datetime = field(default_factory=datetime.utcnow)
+    message_count: int = 0
+    active_agents: List[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
 
 
 class ChatService:
@@ -54,7 +54,15 @@ class ChatService:
     - User preference management
     """
 
-    def __init__(self):
+    def __init__(self, db_session=None):
+        """
+        Initialize ChatService with an optional database session.
+        
+        Args:
+            db_session: Optional SQLAlchemy async session. If not provided,
+                      a new session will be created for each operation.
+        """
+        self.db = db_session
         self.orchestrator = AgentOrchestrator()
         self.active_conversations: Dict[str, ConversationContext] = {}
         self.rate_limits: Dict[str, Dict[str, Any]] = {}
@@ -90,11 +98,11 @@ class ChatService:
         
         # Create conversation in database
         async with get_db_session() as session:
-            conversation = Conversation(
+            conversation = ConversationTable(
                 id=conversation_id,
                 user_id=user_id,
                 title=title or f"Conversation {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
-                status=ConversationStatus.ACTIVE,
+                status=ConversationStatus.ACTIVE.value,
                 context_data=json.dumps(initial_context or {}),
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow()
@@ -116,7 +124,7 @@ class ChatService:
             "conversation_id": conversation_id,
             "title": conversation.title,
             "created_at": conversation.created_at.isoformat(),
-            "status": conversation.status.value
+            "status": conversation.status
         }
 
     async def send_message(self, conversation_id: str, user_id: str, 
@@ -140,10 +148,7 @@ class ChatService:
             self.active_conversations[conversation_id] = ConversationContext(
                 conversation_id=conversation_id,
                 user_id=user_id,
-                created_at=datetime.utcnow(),
-                last_activity=datetime.utcnow(),
-                message_count=0,
-                context={}
+                context_data={}
             )
         
         # Validate conversation access
@@ -178,11 +183,11 @@ class ChatService:
         self.active_conversations[conversation_id].last_activity = datetime.utcnow()
         
         return ChatResponse(
-            conversation_id=conversation_id,
-            message_id=ai_message_id,
-            response=ai_response.response,
+            conversation_id=uuid.UUID(conversation_id),
+            message_id=uuid.UUID(ai_message_id),
+            content=ai_response.response,
             agent_type=ai_response.agent_type,
-            timestamp=datetime.utcnow(),
+            created_at=datetime.utcnow(),
             metadata={
                 "user_message_id": user_message_id,
                 "tools_used": ai_response.tools_used,
@@ -266,12 +271,8 @@ class ChatService:
             
             return [
                 ChatMessage(
-                    id=msg.id,
-                    conversation_id=msg.conversation_id,
-                    sender=msg.role,  
+                    role=MessageRole.USER if msg.role == "user" else MessageRole.ASSISTANT,
                     content=msg.content,
-                    message_type=MessageType.TEXT,  
-                    timestamp=msg.created_at,
                     metadata=msg.meta_data or {}
                 ) for msg in messages
             ]

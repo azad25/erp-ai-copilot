@@ -1,36 +1,26 @@
 """
 Database connection management for the AI Copilot service.
 """
-import os
-import asyncio
-import logging
-from contextlib import asynccontextmanager
 from typing import Optional, Any, Dict, List, TypeVar, Type, Union, Tuple, AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
-import asyncpg
 import motor.motor_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as redis
 from redis.asyncio import Redis, ConnectionPool
-import qdrant_client
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
 from elasticsearch import AsyncElasticsearch
 import structlog
-from types import TracebackType
 
-from app.config.settings import get_settings
+from app.core.config import settings
 
 # Type variables for better type hints
 T = TypeVar('T')
 ResultType = List[Dict[str, Any]]
 
 logger = structlog.get_logger(__name__)
-settings = get_settings()
 
 # Global instance of the database manager
 _db_manager = None
@@ -85,19 +75,19 @@ class DatabaseManager:
         """Initialize PostgreSQL connection."""
         try:
             # Convert PostgreSQL URL to async format
-            async_url = settings.database.url.replace("postgresql://", "postgresql+asyncpg://")
+            async_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
             
             engine_kwargs = {
-                "echo": settings.service.debug,
+                "echo": settings.DEBUG,
                 "pool_pre_ping": True,
                 "pool_recycle": 3600,
             }
             
-            if settings.service.debug:
+            if settings.DEBUG:
                 engine_kwargs["poolclass"] = NullPool
             else:
-                engine_kwargs["pool_size"] = settings.database.max_connections
-                engine_kwargs["max_overflow"] = settings.database.max_connections * 2
+                engine_kwargs["pool_size"] = settings.DB_MAX_CONNECTIONS
+                engine_kwargs["max_overflow"] = settings.DB_MAX_CONNECTIONS * 2
             
             self.postgres_engine = create_async_engine(async_url, **engine_kwargs)
             
@@ -123,9 +113,9 @@ class DatabaseManager:
         """Initialize MongoDB connection."""
         try:
             self.mongodb_client = AsyncIOMotorClient(
-                settings.mongodb.uri,
-                maxPoolSize=settings.mongodb.max_pool_size,
-                minPoolSize=settings.mongodb.min_pool_size,
+                settings.MONGODB_URI,
+                maxPoolSize=settings.MONGODB_MAX_POOL_SIZE,
+                minPoolSize=settings.MONGODB_MIN_POOL_SIZE,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
                 socketTimeoutMS=5000,
@@ -144,9 +134,9 @@ class DatabaseManager:
         """Initialize Redis connection."""
         try:
             pool = ConnectionPool.from_url(
-                settings.redis.url,
-                max_connections=settings.redis.pool_size,
-                decode_responses=settings.redis.decode_responses,
+                settings.redis_url,
+                max_connections=settings.REDIS_POOL_SIZE,
+                decode_responses=True,
                 retry_on_timeout=True,
                 health_check_interval=30,
             )
@@ -166,9 +156,9 @@ class DatabaseManager:
         """Initialize Qdrant connection."""
         try:
             self.qdrant_client = AsyncQdrantClient(
-                host=settings.qdrant.host,
-                port=settings.qdrant.port,
-                api_key=settings.qdrant.api_key,
+                host=settings.QDRANT_HOST,
+                port=settings.QDRANT_PORT,
+                api_key=settings.QDRANT_API_KEY,
                 https=False,  # Using HTTP for local development
                 timeout=30.0
             )
@@ -259,7 +249,7 @@ class DatabaseManager:
         """Get MongoDB database instance."""
         if not self.mongodb_client:
             raise RuntimeError("MongoDB not initialized")
-        return self.mongodb_client[settings.mongodb.database]
+        return self.mongodb_client[settings.MONGODB_DATABASE]
         
     def get_mongo_client(self) -> 'motor.motor_asyncio.AsyncIOMotorClient':
         """Get MongoDB client."""
@@ -273,11 +263,21 @@ class DatabaseManager:
             raise RuntimeError("Redis not initialized")
         return self.redis_client
     
-    def get_qdrant_client(self) -> AsyncQdrantClient:
+    async def get_qdrant_client(self) -> AsyncQdrantClient:
         """Get Qdrant client."""
         if not self.qdrant_client:
-            raise RuntimeError("Qdrant not initialized")
+            await self._init_qdrant()
         return self.qdrant_client
+
+    async def get_redis(self):
+        """Get Redis client."""
+        if not self.redis_client:
+            await self._init_redis()
+        return self.redis_client
+
+    async def initialize_database(self):
+        """Initialize all database connections."""
+        await self.initialize()
     
     async def close(self):
         """Close all database connections."""

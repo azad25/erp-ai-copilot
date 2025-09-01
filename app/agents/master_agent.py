@@ -114,12 +114,12 @@ class MasterAgent(BaseAgent):
     def _initialize_agents(self, llm_service: LLMService):
         """Initialize all specialized agents."""
         self.agents = {
-            AgentType.QUERY: QueryAgent(llm_service),
-            AgentType.ACTION: ActionAgent(llm_service),
-            AgentType.ANALYTICS: AnalyticsAgent(llm_service),
-            AgentType.COMPLIANCE: ComplianceAgent(llm_service),
-            AgentType.HELP: HelpAgent(llm_service),
-            AgentType.SCHEDULER: SchedulerAgent(llm_service)
+            AgentType.QUERY: QueryAgent(llm_service=llm_service),
+            AgentType.ACTION: ActionAgent(llm_service=llm_service),
+            AgentType.ANALYTICS: AnalyticsAgent(llm_service=llm_service),
+            AgentType.COMPLIANCE: ComplianceAgent(llm_service=llm_service),
+            AgentType.HELP: HelpAgent(llm_service=llm_service),
+            AgentType.SCHEDULER: SchedulerAgent(llm_service=llm_service)
         }
     
     async def execute(self, request: AgentRequest) -> AgentResponse:

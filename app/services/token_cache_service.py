@@ -6,11 +6,12 @@ to the auth service for the same user tokens.
 """
 import json
 import hashlib
+import asyncio
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import structlog
 import redis.asyncio as redis
-from app.clients.auth_grpc.client import get_auth_service_client
+from app.clients.auth_grpc import get_auth_service_client
 from app.services.jwt_service import get_jwt_service
 
 logger = structlog.get_logger(__name__)
@@ -119,54 +120,71 @@ class TokenCacheService:
             Dict containing user info if valid, None otherwise
         """
         if not token:
+            logger.warning("Empty token provided for validation")
             return None
         
         # Check cache first
         cached_user_info = await self.get_cached_user_info(token)
         if cached_user_info:
+            logger.info("Using cached token validation", user_id=cached_user_info.get('id'))
             return cached_user_info
         
         # Not in cache, try auth service first
         try:
+            logger.info("Attempting to validate token with auth service")
             auth_client = get_auth_service_client()
             
-            # Validate token with auth service
-            user_info = await auth_client.validate_token(token)
-            if not user_info:
-                logger.warning("Token validation failed with auth service")
-                # Fall back to local JWT validation
+            if not auth_client or not hasattr(auth_client, 'validate_token'):
+                logger.warning("Auth client not properly initialized, falling back to local validation")
                 return await self._fallback_to_local_validation(token)
             
-            # Get full user details from auth service
-            user_details = await auth_client.get_user(user_info['user_id'])
-            if not user_details:
-                logger.warning("User not found in auth service", user_id=user_info['user_id'])
-                # Fall back to local JWT validation
+            # Validate token with auth service with timeout
+            try:
+                user_info = await asyncio.wait_for(auth_client.validate_token(token), timeout=5.0)
+                if not user_info:
+                    logger.warning("Auth service returned empty response")
+                    return await self._fallback_to_local_validation(token)
+                
+                # Get full user details from auth service
+                user_details = await asyncio.wait_for(
+                    auth_client.get_user(user_info['user_id']), 
+                    timeout=5.0
+                )
+                
+                if not user_details:
+                    logger.warning("User not found in auth service", user_id=user_info['user_id'])
+                    return await self._fallback_to_local_validation(token)
+                
+                # Prepare user info for caching
+                cached_user_info = {
+                    "id": user_details.get('id'),
+                    "email": user_details.get('email', 'unknown@example.com'),
+                    "organization_id": user_details.get('organization_id'),
+                    "is_active": user_details.get('is_active', False),
+                    "is_verified": user_details.get('is_verified', False),
+                    "validated_at": datetime.utcnow().isoformat(),
+                    "validation_method": "auth_service"
+                }
+                
+                # Cache the validated user info
+                await self.cache_user_info(token, cached_user_info)
+                
+                logger.info("Token validated and cached via auth service", 
+                          user_id=cached_user_info['id'],
+                          email=cached_user_info['email'])
+                
+                return cached_user_info
+                
+            except asyncio.TimeoutError:
+                logger.warning("Auth service request timed out, falling back to local validation")
                 return await self._fallback_to_local_validation(token)
-            
-            # Prepare user info for caching
-            cached_user_info = {
-                "id": user_details['id'],
-                "email": user_details['email'],
-                "organization_id": user_details['organization_id'],
-                "is_active": user_details['is_active'],
-                "is_verified": user_details['is_verified'],
-                "validated_at": datetime.utcnow().isoformat(),
-                "validation_method": "auth_service"
-            }
-            
-            # Cache the validated user info
-            await self.cache_user_info(token, cached_user_info)
-            
-            logger.info("Token validated and cached via auth service", 
-                       user_id=cached_user_info['id'],
-                       email=cached_user_info['email'])
-            
-            return cached_user_info
+                
+            except Exception as e:
+                logger.error(f"Error during auth service validation: {str(e)}", exc_info=True)
+                return await self._fallback_to_local_validation(token)
             
         except Exception as e:
-            logger.error("Error validating token with auth service", error=str(e))
-            # Fall back to local JWT validation
+            logger.error(f"Unexpected error in validate_and_cache_token: {str(e)}", exc_info=True)
             return await self._fallback_to_local_validation(token)
     
     async def _fallback_to_local_validation(self, token: str) -> Optional[Dict[str, Any]]:
@@ -182,10 +200,12 @@ class TokenCacheService:
         try:
             logger.info("Falling back to local JWT validation")
             jwt_service = get_jwt_service()
-            
             if not jwt_service:
-                logger.error("JWT service not available for fallback")
-                return None
+                logger.warning("JWT service not available for fallback, initializing...")
+                from app.services.jwt_service import initialize_jwt_service
+                from app.core.config import settings
+                initialize_jwt_service(settings.JWT_SECRET)
+                jwt_service = get_jwt_service()
             
             # Extract user info from JWT token locally
             user_info = jwt_service.extract_user_info(token)
