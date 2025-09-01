@@ -17,7 +17,10 @@ from app.api.websocket.handlers import (
     BaseMessageHandler,
     ChatMessageHandler,
     TypingIndicatorHandler,
-    PingHandler
+    PingHandler,
+    SubscribeHandler,
+    UnsubscribeHandler,
+    HeartbeatHandler
 )
 from app.api.websocket.models.messages import WebSocketMessage
 from app.api.websocket.exceptions import (
@@ -38,8 +41,12 @@ class WebSocketService:
         self.connection_manager = connection_manager or ConnectionManager()
         self.handlers: Dict[str, Type[BaseMessageHandler]] = {
             "chat_message": ChatMessageHandler,
+            "ai_chat": ChatMessageHandler,  # Support both message types for compatibility
             "typing_indicator": TypingIndicatorHandler,
-            "ping": PingHandler
+            "ping": PingHandler,
+            "subscribe": SubscribeHandler,
+            "unsubscribe": UnsubscribeHandler,
+            "heartbeat": HeartbeatHandler
         }
     
     async def authenticate_connection(

@@ -7,10 +7,14 @@ from .base_handler import BaseMessageHandler
 from .chat_handler import ChatMessageHandler
 from .typing_handler import TypingIndicatorHandler
 from .ping_handler import PingHandler
+from .subscribe_handler import SubscribeHandler, UnsubscribeHandler
+from .heartbeat_handler import HeartbeatHandler
 
 __all__ = [
-    'BaseMessageHandler',
-    'ChatMessageHandler',
-    'TypingIndicatorHandler',
-    'PingHandler'
+    "ChatMessageHandler",
+    "TypingIndicatorHandler", 
+    "PingHandler",
+    "SubscribeHandler",
+    "UnsubscribeHandler",
+    "HeartbeatHandler"
 ]

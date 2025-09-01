@@ -36,10 +36,11 @@ class ChatMessageHandler(BaseMessageHandler):
     ) -> None:
         """Handle a chat message."""
         try:
-            # Extract message data from dict
-            conversation_id = message.get("conversation_id")
-            message_text = message.get("message")
-            metadata = message.get("metadata", {})
+            # Extract message data from dict - handle both direct and nested formats
+            data = message.get("data", {})
+            conversation_id = message.get("conversation_id") or data.get("conversationId") or data.get("conversation_id")
+            message_text = message.get("message") or data.get("message")
+            metadata = message.get("metadata", data.get("context", {}))
             
             if not conversation_id or not message_text:
                 await self._send_error(
