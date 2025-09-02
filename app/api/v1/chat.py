@@ -19,6 +19,7 @@ from app.models.api import (
     ConversationListResponse, ConversationResponse, MessageResponse
 )
 from app.services.chat_service import ChatService
+from app.services.conversation_service import conversation_service
 from app.services.auth_service import get_current_user
 from app.core.metrics import CHAT_REQUESTS, CHAT_RESPONSES, CHAT_ERRORS
 
@@ -39,42 +40,33 @@ async def chat(
     try:
         CHAT_REQUESTS.labels(agent_type=request.agent_type, model=request.model).inc()
         
-        # Get or create conversation
+        # Initialize conversation service
+        await conversation_service.initialize()
+        
+        # Get or create conversation using MongoDB
         conversation_id = request.conversation_id
         if not conversation_id:
-            # Create new conversation
-            conversation = Conversation(
-                organization_id=current_user.organization_id,
-                user_id=current_user.id,
+            # Create new conversation in MongoDB
+            conversation_data = await conversation_service.create_conversation(
+                user_id=str(current_user.id),
+                organization_id=str(current_user.organization_id),
                 title=request.message[:100] + "..." if len(request.message) > 100 else request.message,
                 context=request.context,
                 metadata={"source": "api", "agent_type": request.agent_type}
             )
-            db.add(conversation)
-            await db.commit()
-            await db.refresh(conversation)
-            conversation_id = conversation.id
+            conversation_id = conversation_data["conversation_id"]
         else:
             # Verify conversation belongs to user
-            conversation = await db.execute(
-                select(Conversation).where(
-                    and_(
-                        Conversation.id == conversation_id,
-                        Conversation.user_id == current_user.id,
-                        Conversation.organization_id == current_user.organization_id
-                    )
-                )
-            )
-            conversation = conversation.scalar_one_or_none()
-            if not conversation:
+            conversation_data = await conversation_service.get_conversation(conversation_id)
+            if not conversation_data or conversation_data["user_id"] != str(current_user.id):
                 raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Save user message
-        user_message = Message(
+        # Save user message in MongoDB
+        user_message_data = await conversation_service.add_message(
             conversation_id=conversation_id,
-            user_id=current_user.id,
             role="user",
             content=request.message,
+            user_id=str(current_user.id),
             metadata={
                 "agent_type": request.agent_type,
                 "model": request.model,
@@ -82,9 +74,6 @@ async def chat(
                 "max_tokens": request.max_tokens
             }
         )
-        db.add(user_message)
-        await db.commit()
-        await db.refresh(user_message)
         
         # Get AI response
         chat_service = ChatService(db, current_user)
@@ -98,27 +87,20 @@ async def chat(
             context=request.context
         )
         
-        # Save AI response
-        ai_message = Message(
+        # Save AI response in MongoDB
+        ai_message_data = await conversation_service.add_message(
             conversation_id=conversation_id,
-            user_id=None,
             role="assistant",
             content=response["content"],
+            user_id=None,
             metadata={
                 "agent_type": response.get("agent_type"),
                 "model_used": response.get("model_used"),
                 "tokens_used": response.get("tokens_used"),
                 "execution_time_ms": response.get("execution_time_ms")
-            }
+            },
+            reasoning_steps=response.get("reasoning_steps", [])
         )
-        db.add(ai_message)
-        await db.commit()
-        await db.refresh(ai_message)
-        
-        # Update conversation title if it's the first message
-        if not conversation.title or conversation.title.startswith("..."):
-            conversation.title = request.message[:100] + "..." if len(request.message) > 100 else request.message
-            await db.commit()
         
         # Record metrics
         response_time = time.time() - start_time
@@ -133,14 +115,14 @@ async def chat(
         )
         
         return ChatResponse(
-            message_id=ai_message.id,
+            message_id=ai_message_data["message_id"],
             conversation_id=conversation_id,
             content=response["content"],
             agent_type=response.get("agent_type"),
             model_used=response.get("model_used"),
             tokens_used=response.get("tokens_used", 0),
             metadata=response.get("metadata", {}),
-            created_at=ai_message.created_at
+            created_at=ai_message_data["created_at"]
         )
         
     except Exception as e:
@@ -308,21 +290,31 @@ async def create_conversation(
 ):
     """Create a new conversation."""
     try:
-        conversation = Conversation(
-            organization_id=current_user.organization_id,
-            user_id=current_user.id,
+        # Initialize conversation service
+        await conversation_service.initialize()
+        
+        # Create conversation in MongoDB
+        conversation_data = await conversation_service.create_conversation(
+            user_id=str(current_user.id),
+            organization_id=str(current_user.organization_id),
             title=request.title,
             context=request.context,
             metadata=request.metadata
         )
         
-        db.add(conversation)
-        await db.commit()
-        await db.refresh(conversation)
+        logger.info("Conversation created", conversation_id=conversation_data["conversation_id"], user_id=str(current_user.id))
         
-        logger.info("Conversation created", conversation_id=str(conversation.id), user_id=str(current_user.id))
-        
-        return ConversationResponse.from_orm(conversation)
+        return ConversationResponse(
+            id=conversation_data["conversation_id"],
+            organization_id=current_user.organization_id,
+            user_id=current_user.id,
+            title=conversation_data["title"],
+            context=conversation_data["context"],
+            metadata_json=conversation_data["metadata"],
+            status=conversation_data["status"],
+            created_at=conversation_data["created_at"],
+            updated_at=conversation_data["updated_at"]
+        )
         
     except Exception as e:
         logger.error("Failed to create conversation", error=str(e), exc_info=True)
@@ -339,55 +331,34 @@ async def list_conversations(
 ):
     """List user's conversations."""
     try:
-        # Build query
-        query = select(Conversation).where(
-            and_(
-                Conversation.user_id == current_user.id,
-                Conversation.organization_id == current_user.organization_id
-            )
+        # Initialize conversation service
+        await conversation_service.initialize()
+        
+        # Get conversations from MongoDB
+        conversations_data = await conversation_service.get_user_conversations(
+            user_id=str(current_user.id),
+            organization_id=str(current_user.organization_id),
+            limit=size,
+            offset=(page - 1) * size,
+            status=status
         )
-        
-        if status:
-            query = query.where(Conversation.status == status)
-        
-        # Get total count
-        count_query = select(Conversation).where(
-            and_(
-                Conversation.user_id == current_user.id,
-                Conversation.organization_id == current_user.organization_id
-            )
-        )
-        if status:
-            count_query = count_query.where(Conversation.status == status)
-        
-        total_result = await db.execute(count_query)
-        total = len(total_result.scalars().all())
-        
-        # Get paginated results
-        query = query.order_by(Conversation.updated_at.desc()).offset((page - 1) * size).limit(size)
-        result = await db.execute(query)
-        conversations = result.scalars().all()
         
         # Convert to response format
-        conversation_data = []
-        for conv in conversations:
-            # Get message count
-            message_count = await db.execute(
-                select(Message).where(Message.conversation_id == conv.id)
-            )
-            message_count = len(message_count.scalars().all())
-            
-            conversation_data.append({
-                "id": conv.id,
-                "title": conv.title,
-                "status": conv.status,
-                "created_at": conv.created_at,
-                "updated_at": conv.updated_at,
-                "message_count": message_count
+        conversation_list = []
+        for conv in conversations_data["conversations"]:
+            conversation_list.append({
+                "id": conv["conversation_id"],
+                "title": conv["title"],
+                "status": conv["status"],
+                "created_at": conv["created_at"],
+                "updated_at": conv["updated_at"],
+                "message_count": conv["message_count"]
             })
         
+        total = conversations_data["total"]
+        
         return ConversationListResponse(
-            conversations=conversation_data,
+            conversations=conversation_list,
             total=total,
             page=page,
             size=size,
@@ -402,27 +373,32 @@ async def list_conversations(
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
-    conversation_id: uuid.UUID,
+    conversation_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """Get a specific conversation."""
     try:
-        result = await db.execute(
-            select(Conversation).where(
-                and_(
-                    Conversation.id == conversation_id,
-                    Conversation.user_id == current_user.id,
-                    Conversation.organization_id == current_user.organization_id
-                )
-            )
-        )
-        conversation = result.scalar_one_or_none()
+        # Initialize conversation service
+        await conversation_service.initialize()
         
-        if not conversation:
+        # Get conversation from MongoDB
+        conversation_data = await conversation_service.get_conversation(conversation_id)
+        
+        if not conversation_data or conversation_data["user_id"] != str(current_user.id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        return ConversationResponse.from_orm(conversation)
+        return ConversationResponse(
+            id=conversation_data["conversation_id"],
+            organization_id=uuid.UUID(conversation_data["organization_id"]),
+            user_id=uuid.UUID(conversation_data["user_id"]),
+            title=conversation_data["title"],
+            context=conversation_data["context"],
+            metadata_json=conversation_data.get("metadata", {}),
+            status=conversation_data["status"],
+            created_at=conversation_data["created_at"],
+            updated_at=conversation_data["updated_at"]
+        )
         
     except HTTPException:
         raise
@@ -517,7 +493,7 @@ async def delete_conversation(
 
 @router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
 async def get_conversation_messages(
-    conversation_id: uuid.UUID,
+    conversation_id: str,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -525,30 +501,38 @@ async def get_conversation_messages(
 ):
     """Get messages from a conversation."""
     try:
-        # Verify conversation belongs to user
-        conversation_result = await db.execute(
-            select(Conversation).where(
-                and_(
-                    Conversation.id == conversation_id,
-                    Conversation.user_id == current_user.id,
-                    Conversation.organization_id == current_user.organization_id
-                )
-            )
-        )
-        conversation = conversation_result.scalar_one_or_none()
+        # Initialize conversation service
+        await conversation_service.initialize()
         
-        if not conversation:
+        # Verify conversation belongs to user
+        conversation_data = await conversation_service.get_conversation(conversation_id)
+        if not conversation_data or conversation_data["user_id"] != str(current_user.id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Get messages
-        query = select(Message).where(
-            Message.conversation_id == conversation_id
-        ).order_by(Message.created_at.asc()).offset((page - 1) * size).limit(size)
+        # Get messages from MongoDB
+        messages = await conversation_service.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=size,
+            offset=(page - 1) * size,
+            include_reasoning=True
+        )
         
-        result = await db.execute(query)
-        messages = result.scalars().all()
+        # Convert to response format
+        message_responses = []
+        for msg in messages:
+            message_responses.append(MessageResponse(
+                id=uuid.UUID(msg["message_id"]) if msg["message_id"] else uuid.uuid4(),
+                conversation_id=uuid.UUID(conversation_id) if conversation_id else uuid.uuid4(),
+                user_id=uuid.UUID(msg["user_id"]) if msg.get("user_id") else None,
+                role=msg["role"],
+                content=msg["content"],
+                metadata_json=msg.get("metadata", {}),
+                tokens_used=msg.get("tokens_used", 0),
+                model_used=msg.get("model_used"),
+                created_at=msg["created_at"]
+            ))
         
-        return [MessageResponse.from_orm(msg) for msg in messages]
+        return message_responses
         
     except HTTPException:
         raise
