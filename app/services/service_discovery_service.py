@@ -12,8 +12,9 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-import aiofiles
+# import aiofiles  # Temporarily disabled - missing from Docker container
 import yaml
+import docker
 from dataclasses import dataclass, field
 
 from app.config.settings import get_settings
@@ -96,9 +97,9 @@ class ServiceDiscoveryService:
             raise
     
     async def _discover_services(self):
-        """Discover ERP services from configuration files"""
-        # Discover from docker-compose files
-        await self._discover_from_docker_compose()
+        """Discover ERP services from Docker API and directories"""
+        # Discover from Docker API
+        await self._discover_from_docker_api()
         
         # Discover from service directories
         await self._discover_from_directories()
@@ -108,52 +109,92 @@ class ServiceDiscoveryService:
         
         logger.info(f"Discovered {len(self.services)} services")
     
-    async def _discover_from_docker_compose(self):
-        """Discover services from docker-compose files"""
-        compose_files = [
-            "docker-compose.yml",
-            "docker-compose.dev.yml",
-            "docker-compose.prod.yml"
-        ]
-        
-        for compose_file in compose_files:
-            compose_path = Path(self.erp_suite_path) / compose_file
-            if compose_path.exists():
-                try:
-                    async with aiofiles.open(compose_path, 'r') as f:
-                        content = await f.read()
-                        compose_data = yaml.safe_load(content)
-                        
-                    services_config = compose_data.get('services', {})
-                    for service_name, config in services_config.items():
-                        await self._register_service_from_compose(service_name, config)
-                        
-                except Exception as e:
-                    logger.error(f"Failed to parse {compose_file}: {e}")
+    async def _discover_from_docker_api(self):
+        """Discover services from Docker API"""
+        try:
+            # Connect to Docker daemon
+            client = docker.from_env()
+            
+            # Get running containers
+            containers = client.containers.list(all=True)
+            
+            for container in containers:
+                # Filter ERP suite containers
+                if any(prefix in container.name for prefix in ['erp-suite-', 'erp_suite_']):
+                    await self._register_service_from_container(container)
+                    
+            client.close()
+            
+        except Exception as e:
+            logger.error(f"Failed to discover services from Docker API: {e}")
     
-    async def _register_service_from_compose(self, name: str, config: Dict[str, Any]):
-        """Register service from docker-compose configuration"""
-        ports = config.get('ports', [])
-        environment = config.get('environment', {})
+    async def _register_service_from_container(self, container):
+        """Register service from Docker container"""
+        try:
+            # Extract service info from container
+            name = container.name.replace('erp-suite-', '').replace('erp_suite_', '')
+            
+            # Get container ports
+            ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+            endpoint = "http://localhost"
+            
+            # Find the first exposed port
+            for port_spec, port_bindings in ports.items():
+                if port_bindings:
+                    host_port = port_bindings[0].get('HostPort')
+                    if host_port:
+                        endpoint = f"http://localhost:{host_port}"
+                        break
+            
+            # Get environment variables
+            env_vars = container.attrs.get('Config', {}).get('Env', [])
+            environment = {}
+            for env_var in env_vars:
+                if '=' in env_var:
+                    key, value = env_var.split('=', 1)
+                    environment[key] = value
+            
+            service = ServiceInfo(
+                name=name,
+                type="microservice",
+                version=environment.get('VERSION', '1.0.0'),
+                status=container.status,
+                endpoint=endpoint,
+                health_check_url=f"{endpoint}/health",
+                dependencies=[],
+                capabilities=self._extract_capabilities_from_name(name)
+            )
+            
+            self.services[name] = service
+            
+        except Exception as e:
+            logger.error(f"Failed to register service from container {container.name}: {e}")
+    
+    def _extract_capabilities_from_name(self, name: str) -> List[str]:
+        """Extract capabilities from service name"""
+        capabilities = []
         
-        # Extract port information
-        endpoint = "http://localhost"
-        if ports:
-            port = str(ports[0]).split(':')[-1]
-            endpoint = f"http://localhost:{port}"
+        # Check for specific service types
+        if "auth" in name:
+            capabilities.extend(["User Management", "JWT", "RBAC", "Authentication"])
+        elif "sales" in name:
+            capabilities.extend(["CRM", "Invoicing", "Customer Management"])
+        elif "inventory" in name:
+            capabilities.extend(["Stock Management", "Product Catalog"])
+        elif "finance" in name or "invoice" in name:
+            capabilities.extend(["Accounting", "Financial Reports", "Invoicing"])
+        elif "purchase" in name:
+            capabilities.extend(["Purchase Orders", "Vendor Management"])
+        elif "api-gateway" in name:
+            capabilities.extend(["API Gateway", "Service Routing", "Load Balancing"])
+        elif "ai-copilot" in name:
+            capabilities.extend(["AI Assistant", "Natural Language Processing", "RAG"])
+        elif "log" in name:
+            capabilities.extend(["Logging", "Monitoring", "Analytics"])
+        elif "subscription" in name:
+            capabilities.extend(["Subscription Management", "Billing"])
         
-        service = ServiceInfo(
-            name=name,
-            type="microservice",
-            version=environment.get('VERSION', '1.0.0'),
-            status="unknown",
-            endpoint=endpoint,
-            health_check_url=f"{endpoint}/health",
-            dependencies=config.get('depends_on', []),
-            capabilities=self._extract_capabilities_from_config(config)
-        )
-        
-        self.services[name] = service
+        return capabilities
     
     async def _discover_from_directories(self):
         """Discover services from directory structure"""
@@ -171,8 +212,8 @@ class ServiceDiscoveryService:
                     config_path = item / config_file
                     if config_path.exists():
                         try:
-                            async with aiofiles.open(config_path, 'r') as f:
-                                content = await f.read()
+                            with open(config_path, 'r') as f:
+                                content = f.read()
                                 service_config = yaml.safe_load(content)
                                 break
                         except Exception as e:
@@ -208,21 +249,29 @@ class ServiceDiscoveryService:
     async def _discover_from_api_gateway(self):
         """Discover services from API Gateway"""
         try:
-            services = await api_gateway_client.discover_services()
+            services_response = await api_gateway_client.discover_services()
             
-            for service_data in services:
-                service_name = service_data.get('name')
-                if service_name and service_name not in self.services:
-                    service = ServiceInfo(
-                        name=service_name,
-                        type="microservice",
-                        version=service_data.get('version', '1.0.0'),
-                        status=service_data.get('status', 'unknown'),
-                        endpoint=service_data.get('endpoint', ''),
-                        health_check_url=service_data.get('health_url', ''),
-                        capabilities=service_data.get('capabilities', [])
-                    )
-                    self.services[service_name] = service
+            # Handle both dict response and list response
+            services_list = []
+            if isinstance(services_response, dict):
+                services_list = services_response.get('services', [])
+            elif isinstance(services_response, list):
+                services_list = services_response
+            
+            for service_data in services_list:
+                if isinstance(service_data, dict):
+                    service_name = service_data.get('name')
+                    if service_name and service_name not in self.services:
+                        service = ServiceInfo(
+                            name=service_name,
+                            type="microservice",
+                            version=service_data.get('version', '1.0.0'),
+                            status=service_data.get('status', 'unknown'),
+                            endpoint=service_data.get('endpoint', ''),
+                            health_check_url=service_data.get('health_url', ''),
+                            capabilities=service_data.get('capabilities', [])
+                        )
+                        self.services[service_name] = service
                     
         except Exception as e:
             logger.warning(f"Failed to discover services from API Gateway: {e}")
@@ -288,8 +337,8 @@ class ServiceDiscoveryService:
     async def _index_markdown_file(self, file_path: Path, content_type: str):
         """Index a markdown file"""
         try:
-            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                content = await f.read()
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
             
             # Extract title and sections
             lines = content.split('\n')
@@ -453,8 +502,8 @@ class ServiceDiscoveryService:
         go_mod_path = service_path / "go.mod"
         if go_mod_path.exists():
             try:
-                async with aiofiles.open(go_mod_path, 'r') as f:
-                    content = await f.read()
+                with open(go_mod_path, 'r') as f:
+                    content = f.read()
                 
                 if "gin-gonic/gin" in content:
                     return "Gin"
@@ -478,8 +527,8 @@ class ServiceDiscoveryService:
             req_path = service_path / req_file
             if req_path.exists():
                 try:
-                    async with aiofiles.open(req_path, 'r') as f:
-                        content = await f.read()
+                    with open(req_path, 'r') as f:
+                        content = f.read()
                     
                     if "fastapi" in content.lower():
                         return "FastAPI"
@@ -500,8 +549,8 @@ class ServiceDiscoveryService:
         package_json_path = service_path / "package.json"
         if package_json_path.exists():
             try:
-                async with aiofiles.open(package_json_path, 'r') as f:
-                    content = await f.read()
+                with open(package_json_path, 'r') as f:
+                    content = f.read()
                     package_data = json.loads(content)
                 
                 dependencies = {**package_data.get('dependencies', {}), **package_data.get('devDependencies', {})}
@@ -532,8 +581,8 @@ class ServiceDiscoveryService:
         for file_path in route_files:
             if file_path.suffix in ['.py', '.go', '.js', '.ts']:
                 try:
-                    async with aiofiles.open(file_path, 'r') as f:
-                        content = await f.read()
+                    with open(file_path, 'r') as f:
+                        content = f.read()
                     
                     # Simple endpoint extraction (can be enhanced)
                     lines = content.split('\n')
@@ -558,8 +607,8 @@ class ServiceDiscoveryService:
         for file_path in model_files:
             if file_path.suffix in ['.py', '.go', '.js', '.ts']:
                 try:
-                    async with aiofiles.open(file_path, 'r') as f:
-                        content = await f.read()
+                    with open(file_path, 'r') as f:
+                        content = f.read()
                     
                     # Extract model names (simple pattern matching)
                     lines = content.split('\n')
@@ -599,8 +648,8 @@ class ServiceDiscoveryService:
         
         for config_file in config_files:
             try:
-                async with aiofiles.open(config_file, 'r') as f:
-                    content = await f.read()
+                with open(config_file, 'r') as f:
+                    content = f.read()
                 
                 # Look for service references
                 for service_name in self.services.keys():

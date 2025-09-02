@@ -129,8 +129,7 @@ class MemoryService:
         # Store in vector database if embedding provided
         if embedding and self.qdrant:
             try:
-                qdrant_client = await self.qdrant
-                await qdrant_client.upsert(
+                await self.qdrant.upsert(
                     collection_name="ai_memories",
                     points=[{
                         "id": memory_id,
@@ -416,8 +415,7 @@ class MemoryService:
         # Store in vector database
         if embedding and self.qdrant:
             try:
-                qdrant_client = await self.qdrant
-                await qdrant_client.upsert(
+                await self.qdrant.upsert(
                     collection_name="erp_knowledge",
                     points=[{
                         "id": entry_id,
@@ -601,8 +599,7 @@ class MemoryService:
         # Store in vector database if embedding provided
         if embedding and self.qdrant:
             try:
-                qdrant_client = await self.qdrant
-                await qdrant_client.upsert(
+                await self.qdrant.upsert(
                     collection_name="knowledge_base",
                     points=[{
                         "id": entry_id,

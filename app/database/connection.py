@@ -155,11 +155,14 @@ class DatabaseManager:
     async def _init_qdrant(self):
         """Initialize Qdrant connection."""
         try:
+            # Use HTTPS if API key is provided, otherwise HTTP for local development
+            use_https = bool(settings.QDRANT_API_KEY)
+            
             self.qdrant_client = AsyncQdrantClient(
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
-                api_key=settings.QDRANT_API_KEY,
-                https=False,  # Using HTTP for local development
+                api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None,
+                https=use_https,
                 timeout=30.0
             )
             
@@ -266,7 +269,7 @@ class DatabaseManager:
     async def get_qdrant_client(self) -> AsyncQdrantClient:
         """Get Qdrant client."""
         if not self.qdrant_client:
-            await self._init_qdrant()
+            raise RuntimeError("Qdrant not initialized")
         return self.qdrant_client
 
     async def get_redis(self):

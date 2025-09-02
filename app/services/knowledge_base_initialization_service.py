@@ -38,7 +38,7 @@ class KnowledgeBaseInitializationService:
     """
     
     def __init__(self):
-        self.docs_path = Path("/Users/ferdousazad/Documents/erp-suite/erp-ai-copilot/docs")
+        self.docs_path = Path("/app/docs")  # Use container path
         self.processed_files: Set[str] = set()
         self.chunk_size = 1000  # Characters per chunk
         self.chunk_overlap = 200  # Overlap between chunks
@@ -110,8 +110,8 @@ class KnowledgeBaseInitializationService:
     async def _process_markdown_file(self, file_path: Path):
         """Process a single markdown file"""
         try:
-            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                content = await f.read()
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
             
             # Extract metadata
             metadata = self._extract_file_metadata(file_path, content)
@@ -281,7 +281,7 @@ class KnowledgeBaseInitializationService:
     
     async def _process_erp_architecture_docs(self):
         """Process ERP architecture documentation from the main docs folder"""
-        erp_docs_path = Path("/Users/ferdousazad/Documents/erp-suite/erp-suit-technical-docs")
+        erp_docs_path = Path("/app/docs")
         
         if erp_docs_path.exists():
             await self._process_directory_recursively(erp_docs_path, "erp_architecture")
@@ -291,8 +291,8 @@ class KnowledgeBaseInitializationService:
         for item in directory.rglob("*.md"):
             if item.is_file():
                 try:
-                    async with aiofiles.open(item, 'r', encoding='utf-8') as f:
-                        content = await f.read()
+                    with open(item, 'r', encoding='utf-8') as f:
+                        content = f.read()
                     
                     metadata = self._extract_file_metadata(item, content)
                     metadata["category"] = category

@@ -205,6 +205,54 @@ class APIGatewayClient:
             
         return headers
     
+    async def _make_authenticated_request(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Make an authenticated request to the API Gateway"""
+        await self._ensure_session()
+        
+        url = urljoin(self.base_url, endpoint.lstrip('/'))
+        headers = await self._get_auth_headers()
+        
+        try:
+            async with self.session.request(
+                method=method,
+                url=url,
+                headers=headers,
+                json=data,
+                params=params
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                elif response.status == 401:
+                    # Token expired, retry once
+                    await self._authenticate()
+                    headers = await self._get_auth_headers()
+                    
+                    async with self.session.request(
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        json=data,
+                        params=params
+                    ) as retry_response:
+                        if retry_response.status == 200:
+                            return await retry_response.json()
+                        else:
+                            logger.error(f"Request failed after retry: {retry_response.status}")
+                            return {"error": f"Request failed: {retry_response.status}"}
+                else:
+                    logger.error(f"Request failed: {response.status}")
+                    return {"error": f"Request failed: {response.status}"}
+                    
+        except Exception as e:
+            logger.error(f"Request error: {e}")
+            return {"error": str(e)}
+    
     async def get_service_data(
         self,
         service_name: str,
