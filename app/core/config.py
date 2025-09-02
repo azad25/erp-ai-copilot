@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="info", env="LOG_LEVEL")
     HOST: str = Field(default="0.0.0.0", env="HOST")
     PORT: int = Field(default=8003, env="PORT")
+    SERVICE_MODE: str = Field(default="both", env="SERVICE_MODE")  # http, grpc, or both
     
     # Database Configuration (PostgreSQL)
     DB_HOST: str = Field(default="postgres", env="DB_HOST")
@@ -80,6 +81,7 @@ class Settings(BaseSettings):
     AI_MAX_TOKENS: int = Field(default=4000, env="AI_MAX_TOKENS")
     AI_TEMPERATURE: float = Field(default=0.7, env="AI_TEMPERATURE")
     GEMINI_API_KEY: str = Field(default="", env="GEMINI_API_KEY")
+    OPENAI_API_KEY: str = Field(default="", env="OPENAI_API_KEY")
     OLLAMA_BASE_URL: str = Field(default="http://172.17.0.1:11434", env="OLLAMA_BASE_URL")
     
     # Auth Service Configuration
@@ -109,11 +111,14 @@ class Settings(BaseSettings):
     WS_MAX_MESSAGE_SIZE: int = Field(default=1048576, env="WS_MAX_MESSAGE_SIZE")
     
     # gRPC Configuration
+    GRPC_PORT: int = Field(default=50055, env="GRPC_PORT")
     GRPC_MAX_WORKERS: int = Field(default=10, env="GRPC_MAX_WORKERS")
     GRPC_MAX_CONCURRENT_RPCS: int = Field(default=100, env="GRPC_MAX_CONCURRENT_RPCS")
     GRPC_MAX_CONNECTION_IDLE: int = Field(default=300, env="GRPC_MAX_CONNECTION_IDLE")
     GRPC_MAX_CONNECTION_AGE: int = Field(default=600, env="GRPC_MAX_CONNECTION_AGE")
     GRPC_MAX_MESSAGE_SIZE: int = Field(default=52428800, env="GRPC_MAX_MESSAGE_SIZE")
+    GRPC_SSL_CERT_PATH: str = Field(default="", env="GRPC_SSL_CERT_PATH")
+    GRPC_SSL_KEY_PATH: str = Field(default="", env="GRPC_SSL_KEY_PATH")
     
     # RAG Configuration
     RAG_ENABLED: bool = Field(default=True, env="RAG_ENABLED")

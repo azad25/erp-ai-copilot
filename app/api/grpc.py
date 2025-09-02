@@ -170,14 +170,11 @@ class AICopilotServicerImpl(AICopilotServicer):
             # Get settings
             settings = get_settings()
             
-            # Log request
-            logger.info("gRPC health check request received", check_type=request.check_type)
-            
             # Create response
             response = HealthCheckResponse(
                 status="ok",
                 details="AI Copilot service is healthy",
-                version=settings.service.version,
+                version=settings.SERVICE_VERSION,
                 timestamp=int(time.time())
             )
             
@@ -209,11 +206,11 @@ async def start_grpc_server():
         # Create a gRPC server
         server = grpc.aio.server(
             options=[
-                ("grpc.max_send_message_length", settings.grpc.max_message_size),
-                ("grpc.max_receive_message_length", settings.grpc.max_message_size),
-                ("grpc.max_concurrent_streams", settings.grpc.max_concurrent_rpcs),
+                ("grpc.max_send_message_length", settings.GRPC_MAX_MESSAGE_SIZE),
+                ("grpc.max_receive_message_length", settings.GRPC_MAX_MESSAGE_SIZE),
+                ("grpc.max_concurrent_streams", settings.GRPC_MAX_CONCURRENT_RPCS),
             ],
-            maximum_concurrent_rpcs=settings.grpc.max_concurrent_rpcs,
+            maximum_concurrent_rpcs=settings.GRPC_MAX_CONCURRENT_RPCS,
             compression=grpc.Compression.Gzip,
         )
         
@@ -222,21 +219,21 @@ async def start_grpc_server():
         add_AICopilotServicer_to_server(servicer, server)
         
         # Add a secure port with SSL/TLS credentials if in production
-        if settings.environment == "production":
+        if settings.ENVIRONMENT == "production" and settings.GRPC_SSL_CERT_PATH:
             # Load SSL/TLS credentials
-            with open(settings.grpc.ssl_cert_path, "rb") as f:
+            with open(settings.GRPC_SSL_CERT_PATH, "rb") as f:
                 cert = f.read()
-            with open(settings.grpc.ssl_key_path, "rb") as f:
+            with open(settings.GRPC_SSL_KEY_PATH, "rb") as f:
                 key = f.read()
             
             # Create server credentials
             server_credentials = grpc.ssl_server_credentials([(key, cert)])
-            server.add_secure_port(f"[::]:{settings.grpc.port}", server_credentials)
-            logger.info("Starting secure gRPC server", port=settings.grpc.port)
+            server.add_secure_port(f"[::]:{settings.GRPC_PORT}", server_credentials)
+            logger.info("Starting secure gRPC server", port=settings.GRPC_PORT)
         else:
             # Add insecure port for development
-            server.add_insecure_port(f"[::]:{settings.grpc.port}")
-            logger.info("Starting insecure gRPC server", port=settings.grpc.port)
+            server.add_insecure_port(f"[::]:{settings.GRPC_PORT}")
+            logger.info("Starting insecure gRPC server", port=settings.GRPC_PORT)
         
         # Start the server
         await server.start()

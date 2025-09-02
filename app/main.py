@@ -371,19 +371,21 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """Start additional services on application startup."""
-    if settings.service.mode in ["grpc", "both"]:
+    if settings.SERVICE_MODE in ["grpc", "both"]:
         from app.api.grpc import start_grpc_server
-        await start_grpc_server()
-        logger.info("gRPC server started", port=settings.grpc.port)
+        try:
+            grpc_task = asyncio.create_task(start_grpc_server())
+            logger.info("gRPC server startup task created")
+        except Exception as e:
+            logger.error(f"Failed to start gRPC server: {e}")
+            grpc_task = None
 
 # Add shutdown event to clean up resources
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up resources on application shutdown."""
-    if settings.service.mode in ["grpc", "both"]:
-        from app.api.grpc import stop_grpc_server
-        await stop_grpc_server()
-        logger.info("gRPC server stopped")
+    logger.info("Shutting down AI Copilot service...")
+    # Add any cleanup logic here if needed
 
 # Enable CORS middleware with WebSocket support
 app.add_middleware(
@@ -417,7 +419,7 @@ if grpc_router:
 # Include gRPC router if enabled
 try:
     from app.api.grpc import grpc_router
-    if settings.service.mode in ["grpc", "both"]:
+    if hasattr(settings, 'SERVICE_MODE') and settings.SERVICE_MODE in ["grpc", "both"]:
         app.include_router(grpc_router, prefix="/grpc")
 except ImportError:
     logger.warning("gRPC router not available")

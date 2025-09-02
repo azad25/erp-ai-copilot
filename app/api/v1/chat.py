@@ -38,7 +38,9 @@ async def chat(
     start_time = time.time()
     
     try:
-        CHAT_REQUESTS.labels(agent_type=request.agent_type, model=request.model).inc()
+        agent_type = getattr(request, 'agent_type', 'default')
+        model = getattr(request, 'model', 'gemini2.0:flash')
+        CHAT_REQUESTS.labels(agent_type=agent_type, model=model).inc()
         
         # Initialize conversation service
         await conversation_service.initialize()
@@ -56,9 +58,9 @@ async def chat(
             )
             conversation_id = conversation_data["conversation_id"]
         else:
-            # Verify conversation belongs to user
+            # Verify conversation belongs to user (allow if not found for new conversations)
             conversation_data = await conversation_service.get_conversation(conversation_id)
-            if not conversation_data or conversation_data["user_id"] != str(current_user.id):
+            if conversation_data and conversation_data["user_id"] != str(current_user.id):
                 raise HTTPException(status_code=404, detail="Conversation not found")
         
         # Save user message in MongoDB
@@ -75,58 +77,59 @@ async def chat(
             }
         )
         
-        # Get AI response
-        chat_service = ChatService(db, current_user)
-        response = await chat_service.generate_response(
+        # Get AI response using ChatService
+        chat_service = ChatService(db)
+        response = await chat_service.send_message(
             conversation_id=conversation_id,
-            user_message=request.message,
-            agent_type=request.agent_type,
-            model=request.model,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            context=request.context
+            user_id=str(current_user.id),
+            message=request.message,
+            metadata={
+                "agent_type": request.agent_type,
+                "model": request.model,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "context": request.context
+            }
         )
         
-        # Save AI response in MongoDB
-        ai_message_data = await conversation_service.add_message(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=response["content"],
-            user_id=None,
-            metadata={
-                "agent_type": response.get("agent_type"),
-                "model_used": response.get("model_used"),
-                "tokens_used": response.get("tokens_used"),
-                "execution_time_ms": response.get("execution_time_ms")
-            },
-            reasoning_steps=response.get("reasoning_steps", [])
-        )
+        # AI response is already saved by ChatService, just get the response data
+        ai_response_data = {
+            "content": response.content,
+            "agent_type": response.agent_type,
+            "model_used": response.metadata.get("model_used", "gemini2.0:flash"),
+            "tokens_used": response.metadata.get("tokens_used", 0),
+            "execution_time_ms": response.metadata.get("processing_time", 0) * 1000
+        }
         
         # Record metrics
         response_time = time.time() - start_time
-        CHAT_RESPONSES.observe(response_time)
+        try:
+            CHAT_RESPONSES.observe(response_time)
+        except Exception as metric_error:
+            logger.warning(f"Failed to record metrics: {metric_error}")
         
         logger.info(
             "Chat response generated",
             conversation_id=str(conversation_id),
             user_id=str(current_user.id),
             response_time=response_time,
-            tokens_used=response.get("tokens_used", 0)
+            tokens_used=ai_response_data.get("tokens_used", 0)
         )
         
         return ChatResponse(
-            message_id=ai_message_data["message_id"],
+            message_id=response.message_id,
             conversation_id=conversation_id,
-            content=response["content"],
-            agent_type=response.get("agent_type"),
-            model_used=response.get("model_used"),
-            tokens_used=response.get("tokens_used", 0),
-            metadata=response.get("metadata", {}),
-            created_at=ai_message_data["created_at"]
+            content=ai_response_data["content"],
+            agent_type=ai_response_data.get("agent_type"),
+            model_used=ai_response_data.get("model_used"),
+            tokens_used=ai_response_data.get("tokens_used", 0),
+            metadata=response.metadata,
+            created_at=response.created_at
         )
         
     except Exception as e:
-        CHAT_ERRORS.labels(agent_type=request.agent_type, error_type="processing_error").inc()
+        agent_type = getattr(request, 'agent_type', 'default')
+        CHAT_ERRORS.labels(agent_type=agent_type, error_type="processing_error").inc()
         logger.error(
             "Chat error",
             conversation_id=str(conversation_id) if 'conversation_id' in locals() else None,

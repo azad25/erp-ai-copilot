@@ -445,7 +445,8 @@ class MemoryService:
         category: Optional[str] = None,
         organization_id: str = "system",
         limit: int = 10,
-        score_threshold: float = 0.6
+        score_threshold: float = 0.6,
+        similarity_threshold: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Search knowledge base using semantic search
@@ -456,6 +457,7 @@ class MemoryService:
             organization_id: Organization identifier
             limit: Maximum number of results
             score_threshold: Minimum similarity score
+            similarity_threshold: Alternative name for score_threshold (for compatibility)
             
         Returns:
             List of relevant knowledge entries
@@ -464,6 +466,9 @@ class MemoryService:
             await self.initialize()
             
         try:
+            # Use similarity_threshold if provided, otherwise use score_threshold
+            threshold = similarity_threshold if similarity_threshold is not None else score_threshold
+            
             # Generate embedding for query
             query_embedding = await self._generate_embedding(query)
             
@@ -484,7 +489,7 @@ class MemoryService:
                 query_vector=query_embedding,
                 query_filter=query_filter,
                 limit=limit,
-                score_threshold=score_threshold
+                score_threshold=threshold
             )
             
             entries = []

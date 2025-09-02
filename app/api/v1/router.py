@@ -6,15 +6,17 @@ from .chat import router as chat_router
 from .infrastructure import router as infrastructure_router
 from .dashboard import router as dashboard_router
 from .rag import router as rag_router
+from .reasoning import router as reasoning_router
 
 # Get settings
 settings = get_settings()
 
 # Create the main API router
-api_router = APIRouter(prefix="/v1")
+api_router = APIRouter()
 
 # Include all sub-routers
 api_router.include_router(chat_router, prefix="/chat", tags=["chat"])
+api_router.include_router(reasoning_router, prefix="/reasoning", tags=["reasoning"])
 api_router.include_router(infrastructure_router, prefix="/infrastructure", tags=["infrastructure"])
 api_router.include_router(dashboard_router, prefix="/ai-copilot", tags=["dashboard"])
 

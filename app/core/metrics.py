@@ -8,7 +8,7 @@ logger = structlog.get_logger(__name__)
 
 # Chat metrics
 CHAT_REQUESTS = Counter('ai_copilot_chat_requests_total', 'Total chat requests', ['agent_type', 'model'])
-CHAT_RESPONSES = Histogram('ai_copilot_chat_response_duration_seconds', 'Chat response time', ['agent_type', 'model'])
+CHAT_RESPONSES = Histogram('ai_copilot_chat_response_duration_seconds', 'Chat response time')
 CHAT_ERRORS = Counter('ai_copilot_chat_errors_total', 'Total chat errors', ['agent_type', 'error_type'])
 
 # Agent metrics
@@ -95,7 +95,7 @@ def record_chat_metrics(agent_type: str, model: str, response_time: float, succe
     """Record chat-related metrics."""
     try:
         CHAT_REQUESTS.labels(agent_type=agent_type, model=model).inc()
-        CHAT_RESPONSES.labels(agent_type=agent_type, model=model).observe(response_time)
+        CHAT_RESPONSES.observe(response_time)
         
         if not success:
             CHAT_ERRORS.labels(agent_type=agent_type, error_type='response_failure').inc()
