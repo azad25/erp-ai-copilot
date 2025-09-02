@@ -41,12 +41,13 @@ class ReasoningStep:
     step_type: ReasoningStepType
     title: str
     description: str
+    content: str
     source: str
+    icon: str = "🤔"
     status: str = "processing"  # processing, completed, failed
-    data: Dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.utcnow)
     processing_time: float = 0.0
-    icon: str = "🤔"
+    metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -105,6 +106,7 @@ class ReasoningEngine:
                 step_type=ReasoningStepType.THINKING,
                 title="Analyzing user query",
                 description="Determining required data sources and processing approach",
+                content="Analyzing user query to determine the best approach",
                 source="AI Reasoning Engine",
                 icon=self.step_icons[ReasoningStepType.THINKING]
             ))
@@ -116,6 +118,7 @@ class ReasoningEngine:
                 step_type=ReasoningStepType.MEMORY_CHECK,
                 title="Checking conversation context",
                 description="Retrieving relevant conversation history and user preferences",
+                content="Checking conversation context and user memory",
                 source="MongoDB Memory Store",
                 icon=self.step_icons[ReasoningStepType.MEMORY_CHECK]
             ))
@@ -127,6 +130,7 @@ class ReasoningEngine:
                 step_type=ReasoningStepType.VECTOR_SEARCH,
                 title="Searching knowledge base",
                 description="Finding relevant documentation and code snippets",
+                content="Searching knowledge base for relevant information",
                 source="Qdrant Vector Database",
                 icon=self.step_icons[ReasoningStepType.VECTOR_SEARCH]
             ))
@@ -139,6 +143,7 @@ class ReasoningEngine:
                     step_type=ReasoningStepType.API_CALL,
                     title="Retrieving ERP data",
                     description="Fetching data from ERP services via API gateway",
+                    content="Retrieving ERP data from API gateway",
                     source="API Gateway",
                     icon=self.step_icons[ReasoningStepType.API_CALL]
                 ))
@@ -150,6 +155,7 @@ class ReasoningEngine:
                 step_type=ReasoningStepType.COMPLETION,
                 title="Generating response",
                 description="Synthesizing information to create comprehensive answer",
+                content="Generating final response based on gathered information",
                 source="AI Language Model",
                 icon=self.step_icons[ReasoningStepType.COMPLETION]
             ))
@@ -429,6 +435,7 @@ class ReasoningEngine:
             step_type=step_type,
             title=title,
             description=description,
+            content=description,
             source=source,
             icon=self.step_icons.get(step_type, "🤔")
         )

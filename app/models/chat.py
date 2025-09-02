@@ -26,9 +26,14 @@ class ReasoningStep(BaseModel):
     
     step_number: int
     step_type: ReasoningStepType
+    title: str
+    description: str
     content: str
     icon: str
-    data_source: Optional[str] = None
+    source: Optional[str] = None
+    data_source: Optional[str] = None  # Deprecated, use 'source'
+    status: str = "processing"  # processing, completed, failed
+    processing_time: Optional[float] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
