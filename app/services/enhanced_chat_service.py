@@ -107,6 +107,7 @@ class EnhancedChatService:
     def __init__(self):
         self.max_context_tokens = 8000  # Efficient context size
         self.reasoning_steps: List[ReasoningStep] = []
+        self.llm_service = None  # Will be initialized when needed
         
     async def process_chat_message(
         self,
@@ -728,8 +729,8 @@ Response:
             final_response = await self._generate_final_response(results, message)
             
             # Store conversation update
-            await self.quick_update_conversation(conversation_id, message, "user")
-            await self.quick_update_conversation(conversation_id, final_response, "assistant")
+            await self._update_conversation(conversation_id, message, "user")
+            await self._update_conversation(conversation_id, final_response, "assistant")
             
             return {
                 "response": final_response,
@@ -771,6 +772,64 @@ Response:
     async def _generate_final_response(self, reasoning_results: List[Dict], original_message: str) -> str:
         """Generate final response from reasoning results"""
         try:
+            # Combine reasoning results into context
+            context = {
+                "original_message": original_message,
+                "reasoning_results": reasoning_results,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Use LLM to generate final response
+            prompt = f"""
+            Based on the step-by-step reasoning results, provide a comprehensive response to: {original_message}
+            
+            Reasoning Context: {json.dumps(context, indent=2)}
+            
+            Provide a clear, helpful response that incorporates insights from the reasoning steps.
+            """
+            
+            response = await self.llm_service.generate_response(
+                prompt=prompt,
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            return response.get("content", "I apologize, but I couldn't generate a response.")
+            
+        except Exception as e:
+            logger.error(f"Failed to generate final response: {e}")
+            return "I encountered an error while processing your request."
+
+    async def _update_conversation(self, conversation_id: str, message: str, role: str):
+        """Update conversation with new message"""
+        try:
+            await conversation_service.add_message(
+                conversation_id=conversation_id,
+                role=role,
+                content=message
+            )
+        except Exception as e:
+            logger.error(f"Failed to update conversation: {e}")
+
+    async def _initialize_llm_service(self):
+        """Initialize LLM service if not already done"""
+        if self.llm_service is None:
+            try:
+                from app.services.llm_service import LLMService
+                self.llm_service = LLMService()
+            except Exception as e:
+                logger.error(f"Failed to initialize LLM service: {e}")
+                self.llm_service = None
+
+    async def _generate_final_response(self, reasoning_results: List[Dict], original_message: str) -> str:
+        """Generate final response from reasoning results"""
+        try:
+            # Initialize LLM service if needed
+            await self._initialize_llm_service()
+            
+            if not self.llm_service:
+                return f"Based on the analysis of '{original_message}', I've processed your request through multiple reasoning steps and data sources."
+            
             # Combine reasoning results into context
             context = {
                 "original_message": original_message,

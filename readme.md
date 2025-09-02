@@ -1,103 +1,182 @@
-# UNIBASE ERP AI Copilot Service
+# ERP AI Copilot Service
 
-A sophisticated, enterprise-grade AI copilot service with robust WebSocket support, designed to integrate seamlessly with existing ERP infrastructure, providing intelligent assistance across all business modules.
+A sophisticated, enterprise-grade AI copilot service with **step-by-step reasoning**, real-time WebSocket streaming, and comprehensive ERP integration. Features transparent AI decision-making, background job processing, and enterprise security with RBAC.
 
-## 🚀 Features
+## 🚀 Core Features
 
-### Core Capabilities
-- **Multi-Agent Architecture**: Specialized agents for different business functions
-- **Real-time Chat**: Robust WebSocket-based conversational interface with production-ready proxy
-- **RAG System**: Advanced retrieval-augmented generation with Qdrant integration
-- **Multi-Model Support**: OpenAI, Anthropic, and local Ollama models
-- **Enterprise Security**: RBAC integration with JWT and gRPC auth service fallback
-- **Token Caching**: Redis-based token validation with 30-minute TTL
-- **Scalable Design**: Microservice architecture with async support
+### 🧠 AI Reasoning Engine
+- **Step-by-Step Reasoning**: Transparent AI decision-making with numbered steps and icons (🧠📂🌐💻🗂️✅)
+- **Real-time Streaming**: WebSocket-based reasoning step streaming via `/api/v1/websocket/ws/reasoning/{conversation_id}`
+- **Multi-Model Support**: OpenAI GPT-4, Anthropic Claude, and local Ollama models with context optimization
+- **RAG Integration**: Retrieval-Augmented Generation with Qdrant vector search
 
-### Agent Types
-- **Query Agent**: Information retrieval and reporting
-- **Action Agent**: CRUD operations and workflow execution
-- **Analytics Agent**: Data analysis and insights generation
-- **Scheduler Agent**: Automated task management
-- **Compliance Agent**: Regulatory and policy enforcement
-- **Help Agent**: User guidance and training
+### 💬 Conversation Management
+- **Session-based Loading**: Load conversations by session ID for optimized frontend performance
+- **MongoDB Persistence**: Conversation storage with Redis caching for fast access
+- **Message History**: Complete CRUD operations for conversations and messages
+- **Analytics**: Conversation analytics and search capabilities
 
-### Integration Points
-- **REST API**: Full CRUD operations for all entities
-- **WebSocket**: Real-time chat and notifications
-- **gRPC**: High-performance inter-service communication
-- **Event Streaming**: Kafka integration for business events
-- **Background Tasks**: Celery-based task processing
+### 📚 Knowledge Base Automation
+- **File Watcher Service**: Monitors documentation folder for automatic updates
+- **Background Processing**: Async job queue for knowledge base refresh and optimization
+- **Semantic Search**: Vector-powered search across ERP documentation and architecture
+- **Category Management**: Organized knowledge base with category filtering
+
+### 🔐 Enterprise Security
+- **API Gateway Integration**: Authenticated access to ERP microservices
+- **RBAC System Commands**: Role-based execution of system commands (docker, sudo)
+- **JWT Authentication**: Token-based auth with WebSocket support
+- **Third-party API Proxy**: Secure external API integration with rate limiting
+
+### ⚡ Performance & Scalability
+- **Background Job Processing**: Async task queue with priority handling
+- **Redis Caching**: Token validation and conversation caching
+- **Connection Management**: Robust WebSocket connection handling
+- **Memory Management**: User context optimization and TTL cleanup
+
+## 🌐 WebSocket Endpoints
+
+### Real-time Communication
+- **`/api/v1/websocket/ws/reasoning/{conversation_id}`**: Step-by-step reasoning streaming with icons
+- **`/api/v1/ws/chat/{conversation_id}`**: Interactive chat sessions with message history
+
+### WebSocket Features
+- **Token Authentication**: JWT-based authentication with fallback to gRPC auth service
+- **Connection Management**: Robust connection handling with reconnection support
+- **Message Processing**: Real-time message processing with reasoning steps
+- **Error Handling**: Comprehensive error handling and logging
+
+## 📡 API Endpoints
+
+### 💬 Conversation Management (`/api/v1/conversations/*`)
+- `POST /conversations` - Create new conversation session
+- `GET /conversations` - List user conversations with pagination
+- `GET /conversations/{id}` - Get conversation with optional messages
+- `PATCH /conversations/{id}` - Update conversation metadata
+- `DELETE /conversations/{id}` - Delete conversation
+- `POST /conversations/{id}/archive` - Archive conversation
+- `GET /conversations/search` - Search conversations
+- `GET /conversations/analytics` - Conversation analytics
+- `GET /conversations/{id}/messages` - Get conversation messages
+
+### 🧠 Memory & Context (`/api/v1/memory/*`)
+- `POST /memory/store` - Store user memory/context
+- `GET /memory/retrieve/{id}` - Retrieve specific memory
+- `GET /memory/search` - Search memories by content
+- `GET /memory/context/{conversation_id}` - Get conversation context
+- `DELETE /memory/delete/{id}` - Delete memory
+- `GET /memory/stats` - Memory usage statistics
+
+### 📚 Knowledge Base (`/api/v1/knowledge-base/*`)
+- `POST /knowledge-base/initialize` - Initialize knowledge base
+- `GET /knowledge-base/status` - Get initialization status
+- `POST /knowledge-base/refresh` - Refresh entire knowledge base
+- `POST /knowledge-base/add-documentation` - Add new documentation
+- `GET /knowledge-base/search` - Semantic search knowledge base
+- `GET /knowledge-base/categories` - Get knowledge categories
+
+### ⚙️ Background Jobs (`/api/v1/background-jobs/*`)
+- `GET /background-jobs/status` - Job queue status
+- `GET /background-jobs/job/{id}` - Specific job status
+- `POST /background-jobs/schedule` - Schedule background job
+- `DELETE /background-jobs/job/{id}` - Cancel job
+- `GET /background-jobs/file-watcher/status` - File watcher status
+- `POST /background-jobs/file-watcher/rescan` - Force file rescan
+- `POST /background-jobs/knowledge-base/refresh` - Schedule KB refresh
+- `POST /background-jobs/optimize-context/{user_id}` - Optimize user context
+
+### 🖥️ System Commands (`/api/v1/system-commands/*`)
+- `POST /system-commands/execute` - Execute system command (RBAC)
+- `GET /system-commands/permissions` - Get user permissions
+- `GET /system-commands/history` - Command execution history
+- `POST /system-commands/validate` - Validate command without execution
+
+### 🌐 Third-party APIs (`/api/v1/third-party-apis/*`)
+- `POST /third-party-apis/call` - Secure API proxy call
+- `GET /third-party-apis/available` - Available APIs for user
+- `POST /third-party-apis/configure` - Configure API credentials
+- `GET /third-party-apis/usage/{api_name}` - API usage statistics
 
 ## 📊 Implementation Status
 
 | Feature Category | Status | Completion |
-|------------------|--------|------------|
-| **Core Agents** | ✅ Complete | 100% |
-| **RAG System** | ✅ Complete | 100% |
-| **REST API** | ✅ Complete | 100% |
-| **WebSocket API** | ✅ Complete | 100% |
-| **WebSocket Proxy** | ✅ Complete | 100% |
-| **Token Caching** | ✅ Complete | 100% |
-| **Database Layer** | ✅ Complete | 100% |
-| **Security Framework** | ✅ Complete | 100% |
-| **Tool System** | ✅ Complete | 100% |
-| **Monitoring** | ✅ Complete | 100% |
-| **Event System** | ⚠️ Partial | 75% |
+|------------------|--------|-----------|
+| **Step-by-Step Reasoning** | ✅ Complete | 100% |
+| **WebSocket Streaming** | ✅ Complete | 100% |
+| **Conversation Management** | ✅ Complete | 100% |
+| **Memory & Context** | ✅ Complete | 100% |
+| **Knowledge Base** | ✅ Complete | 100% |
+| **Background Jobs** | ✅ Complete | 100% |
+| **File Watcher** | ✅ Complete | 100% |
+| **System Commands** | ✅ Complete | 100% |
+| **Third-party APIs** | ✅ Complete | 100% |
+| **API Gateway Integration** | ✅ Complete | 100% |
+| **RBAC Security** | ✅ Complete | 100% |
+| **Redis Caching** | ✅ Complete | 100% |
+| **Vector Search (Qdrant)** | ✅ Complete | 100% |
 | **Multi-tenant Support** | ⚠️ Partial | 80% |
-| **Redis Caching** | ❌ Not Started | 0% |
-| **Elasticsearch** | ❌ Not Started | 0% |
+| **Event System** | ⚠️ Partial | 75% |
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        API Layer (FastAPI)                          │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │   Chat API      │  │  Admin API      │  │ WebSocket API   │    │
-│  │ /api/chat/*     │  │ /api/admin/*    │  │ /ws/chat        │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-├─────────────────────────────────────────────────────────────────────┤
-│                      Agent Orchestration                            │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │  Master Agent   │  │ Routing Engine  │  │Context Manager  │    │
-│  │ (Coordinator)   │  │(Intent->Agent)  │  │(Memory System)  │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-├─────────────────────────────────────────────────────────────────────┤
-│                     Specialized Agents                              │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │  Query Agent    │  │ Action Agent    │  │Analytics Agent  │    │
-│  │ (Read/Report)   │  │(CRUD/Execute)   │  │(Insights/Calc)  │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │Scheduler Agent  │  │Compliance Agent │  │  Help Agent     │    │
-│  │(Tasks/Cron)     │  │(Audit/Rules)    │  │ (Guidance)      │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-├─────────────────────────────────────────────────────────────────────┤
-│                         Tool System                                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │   Tool Registry │  │ ERP Connectors  │  │External APIs    │    │
-│  │(Action Catalog) │  │(Service Calls)  │  │(LLM/3rd Party)  │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-├─────────────────────────────────────────────────────────────────────┤
-│                        Security Layer                               │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │  RBAC Engine    │  │  Audit Logger   │  │  Data Filter    │    │
-│  │(Permissions)    │  │ (All Actions)   │  │  (Row Level)    │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-├─────────────────────────────────────────────────────────────────────┤
-│                      Integration Layer                              │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │
-│  │ Auth gRPC Client│  │HTTP ERP Clients │  │Event Publisher  │    │
-│  │(Your Auth Svc)  │  │(Business Svcs)  │  │ (Kafka Events)  │    │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘    │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────┐    WebSocket     ┌──────────────────┐    gRPC/HTTP    ┌─────────────────┐
+│   Frontend      │◄─────────────────►│   AI Copilot     │◄───────────────►│  API Gateway    │
+│   (React TS)    │    Reasoning      │   (FastAPI)      │   Auth & Data   │   (Go)          │
+│                 │    Streaming      │                  │                 │                 │
+└─────────────────┘                   └──────────────────┘                 └─────────────────┘
+                                              │                                      │
+                                              ▼                                      ▼
+                                    ┌──────────────────┐                 ┌─────────────────┐
+                                    │   Data Layer     │                 │  ERP Services   │
+                                    │                  │                 │                 │
+                                    │ • MongoDB (Docs) │                 │ • Auth Service  │
+                                    │ • Redis (Cache)  │                 │ • Sales Service │
+                                    │ • Qdrant (Vector)│                 │ • Invoice Svc   │
+                                    │ • Kafka (Events) │                 │ • Inventory Svc │
+                                    └──────────────────┘                 └─────────────────┘
 ```
+
+### 🔄 Data Flow
+1. **Frontend** sends chat message via WebSocket
+2. **AI Copilot** processes with step-by-step reasoning
+3. **Reasoning steps** streamed live to frontend with icons
+4. **API Gateway** provides authenticated access to ERP data
+5. **Vector Search** retrieves relevant documentation context
+6. **Background Jobs** handle heavy operations asynchronously
 
 ## 🛠️ Technology Stack
 
-### Backend
-- **Python 3.11+**: Modern Python with async support
-- **FastAPI**: High-performance web framework with WebSocket support
+### Backend Services
+- **FastAPI**: Python 3.11+ web framework with async support
+- **WebSocket**: Real-time reasoning step streaming
+- **Background Jobs**: Celery with Redis broker for async processing
+- **File Watcher**: Automatic documentation monitoring and updates
+
+### AI & ML Stack
+- **LangChain**: AI reasoning framework and prompt management
+- **OpenAI GPT-4**: Primary reasoning model
+- **Anthropic Claude**: Alternative reasoning model
+- **Ollama**: Local model inference support
+- **Sentence Transformers**: Text embeddings for vector search
+
+### Data & Storage
+- **MongoDB**: Document storage for conversations, memory, knowledge base
+- **Redis**: Caching layer for tokens and session data
+- **Qdrant**: Vector database for semantic search and RAG
+- **PostgreSQL**: ERP transactional data (via API Gateway)
+
+### Integration & Communication
+- **Kafka**: Event streaming and microservice communication
+- **gRPC**: High-performance service-to-service communication
+- **JWT**: Token-based authentication with API Gateway
+- **WebSocket**: Real-time bidirectional communication
+
+### Infrastructure & Monitoring
+- **Docker & Docker Compose**: Containerization and orchestration
+- **Prometheus**: Metrics collection and monitoring
+- **Grafana**: Visualization and alerting dashboards
+- **RBAC**: Role-based access control for security
 - **SQLAlchemy**: Database ORM with async support
 - **Motor**: Async MongoDB driver
 - **Redis**: Token caching and rate limiting
@@ -184,34 +263,162 @@ celery -A app.core.celery_app worker --loglevel=info
 celery -A app.core.celery_app beat --loglevel=info
 ```
 
-## 🌟 Recent Updates
+## 🌟 WebSocket Real-time Features
 
-### WebSocket & Authentication Improvements
-- **Fixed WebSocket Proxy**: Completely rewrote WebSocket proxy implementation for reliable message forwarding
-- **Token Caching**: Implemented Redis-based token validation with 30-minute TTL
-- **Fallback Authentication**: Added JWT fallback when gRPC auth service is unavailable
-- **Connection Management**: Improved WebSocket connection handling and error recovery
-- **Performance**: Reduced authentication load with token caching
+### 🔄 Step-by-Step Reasoning Streaming
+**Endpoint**: `/api/v1/websocket/ws/reasoning/{conversation_id}`
 
-### Monitoring & Observability
-- Added Prometheus metrics for WebSocket connections
-- Enhanced logging for better debugging
-- Connection health monitoring
+**Features**:
+- **Live Reasoning Steps**: Real-time streaming of AI reasoning process with numbered steps
+- **Visual Icons**: Each step type has distinctive icons (🧠📂🌐💻🗂️✅)
+- **Progress Tracking**: Frontend can track reasoning progress in real-time
+- **Error Handling**: Graceful error handling with detailed error messages
+
+**Step Types**:
+- 🧠 **Thinking**: AI analysis and decision-making
+- 📂 **Data Retrieval**: Fetching information from databases/APIs
+- 🌐 **API Calls**: External service integration
+- 💻 **Processing**: Data processing and computation
+- 🗂️ **Knowledge Search**: Vector search and RAG operations
+- ✅ **Completion**: Final results and conclusions
+
+### 💬 Interactive Chat Sessions
+**Endpoint**: `/api/v1/ws/chat/{conversation_id}`
+
+**Features**:
+- **Real-time Messaging**: Bidirectional communication with instant responses
+- **Session Management**: Persistent conversation sessions with message history
+- **Context Awareness**: Maintains conversation context across messages
+- **Multi-user Support**: Concurrent chat sessions with proper isolation
+
+### 🔐 WebSocket Authentication
+- **JWT Token Authentication**: Secure token-based authentication
+- **gRPC Fallback**: Automatic fallback to gRPC auth service
+- **Redis Token Caching**: 30-minute TTL for performance optimization
+- **Connection Validation**: Continuous token validation during sessions
+
+### 📊 Connection Management
+- **Robust Reconnection**: Automatic reconnection with exponential backoff
+- **Health Monitoring**: Real-time connection health tracking
+- **Error Recovery**: Graceful error handling and recovery mechanisms
+- **Metrics Integration**: Prometheus metrics for monitoring WebSocket performance
+
+## 📚 API Usage Examples
+
+### 🧠 Step-by-Step Reasoning Example
+
+**WebSocket Connection**:
+```javascript
+const ws = new WebSocket(`ws://localhost:8080/api/v1/websocket/ws/reasoning/${conversationId}?token=${jwtToken}`);
+
+ws.onmessage = (event) => {
+    const step = JSON.parse(event.data);
+    console.log(`${step.icon} Step ${step.step_number}: ${step.description}`);
+    // Update UI with reasoning step
+};
+```
+
+**Expected Response Stream**:
+```json
+{"step_number": 1, "icon": "🧠", "description": "Analyzing user query for intent", "status": "processing"}
+{"step_number": 2, "icon": "📂", "description": "Retrieving customer data from ERP", "status": "processing"}
+{"step_number": 3, "icon": "🌐", "description": "Calling external API for validation", "status": "processing"}
+{"step_number": 4, "icon": "✅", "description": "Analysis complete", "status": "completed", "result": {...}}
+```
+
+### 💬 Conversation Management Examples
+
+**Create New Conversation**:
+```bash
+curl -X POST "http://localhost:8080/api/v1/conversations" \
+  -H "Authorization: Bearer ${JWT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Customer Support Query",
+    "context": {"department": "sales", "priority": "high"}
+  }'
+```
+
+**Send Chat Message**:
+```bash
+curl -X POST "http://localhost:8080/api/v1/chat/message" \
+  -H "Authorization: Bearer ${JWT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversation_id": "conv_123",
+    "message": "Show me sales report for Q3 2024",
+    "enable_reasoning": true
+  }'
+```
+
+### 📚 Knowledge Base Examples
+
+**Search Knowledge Base**:
+```bash
+curl -X GET "http://localhost:8080/api/v1/knowledge-base/search?query=invoice%20processing&limit=5" \
+  -H "Authorization: Bearer ${JWT_TOKEN}"
+```
+
+**Initialize Knowledge Base**:
+```bash
+curl -X POST "http://localhost:8080/api/v1/knowledge-base/initialize?force_refresh=true" \
+  -H "Authorization: Bearer ${JWT_TOKEN}"
+```
+
+### 🖥️ System Commands Examples
+
+**Execute Docker Command** (Admin only):
+```bash
+curl -X POST "http://localhost:8080/api/v1/system-commands/execute" \
+  -H "Authorization: Bearer ${ADMIN_JWT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "command": "docker ps",
+    "working_directory": "/app",
+    "timeout": 30
+  }'
+```
+
+**Validate Command**:
+```bash
+curl -X POST "http://localhost:8080/api/v1/system-commands/validate" \
+  -H "Authorization: Bearer ${JWT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"command": "sudo systemctl status nginx"}'
+```
+
+### 🌐 Third-party API Examples
+
+**Call External API**:
+```bash
+curl -X POST "http://localhost:8080/api/v1/third-party-apis/call" \
+  -H "Authorization: Bearer ${JWT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_name": "stripe",
+    "endpoint": "/v1/customers",
+    "method": "GET",
+    "headers": {"Stripe-Version": "2023-10-16"}
+  }'
+```
 
 ## 📖 Documentation
 
-### Developer Documentation
-- [Developer Guide](DEVELOPER_DOCUMENTATION.md) - Complete architecture and development guide
-- [API Documentation](http://localhost:8080/docs) - Interactive API documentation (when running)
-- [Architecture Overview](ai-agent-architechture.md) - Detailed system architecture
+### Developer Resources
+- **[Interactive API Docs](http://localhost:8080/docs)** - Swagger UI with live testing
+- **[ReDoc Documentation](http://localhost:8080/redoc)** - Alternative API documentation
+- **[OpenAPI Spec](http://localhost:8080/openapi.json)** - Machine-readable API specification
 
 ### Testing
 ```bash
 # Run all tests
 pytest
 
-# Run specific test suite
-pytest tests/test_rag_tools.py
+# Test WebSocket functionality
+pytest tests/test_websocket.py -v
+
+# Test reasoning engine
+pytest tests/test_reasoning.py -v
 
 # Run with coverage
 pytest --cov=app tests/
@@ -348,6 +555,60 @@ curl http://localhost:8080/health
 
 # Detailed status
 curl http://localhost:8080/health/detailed
+
+# WebSocket health
+curl http://localhost:8080/api/v1/websocket/health
+
+# Background jobs status
+curl http://localhost:8080/api/v1/background-jobs/status
+```
+
+## 🎯 Integration with ERP Suite
+
+### API Gateway Integration
+The AI Copilot integrates with the ERP Suite through the API Gateway:
+
+```bash
+# Authenticate via API Gateway
+curl -X POST "http://localhost:8000/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
+
+# Use token for AI Copilot requests
+curl -X POST "http://localhost:8080/api/v1/chat/message" \
+  -H "Authorization: Bearer ${API_GATEWAY_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me customer analytics", "conversation_id": "conv_123"}'
+```
+
+### Service Discovery
+The AI Copilot automatically discovers available ERP services:
+- **Auth Service**: User authentication and RBAC
+- **Sales Service**: Customer and sales data
+- **Invoice Service**: Billing and invoice management
+- **Inventory Service**: Product and stock management
+- **Subscription Service**: SaaS billing and features
+
+### Data Access Patterns
+1. **Authentication**: JWT tokens validated via API Gateway
+2. **Data Retrieval**: Authenticated requests to ERP services
+3. **Real-time Updates**: WebSocket notifications for data changes
+4. **Background Processing**: Async jobs for heavy data operations
+
+---
+
+## 🚀 Getting Started Checklist
+
+- [ ] **Infrastructure**: Start PostgreSQL, Redis, MongoDB, Qdrant, Kafka
+- [ ] **Environment**: Configure `.env` file with API keys and database connections
+- [ ] **Dependencies**: Install Python requirements and initialize databases
+- [ ] **Services**: Start AI Copilot service and background workers
+- [ ] **Testing**: Verify WebSocket connections and API endpoints
+- [ ] **Integration**: Test authentication with API Gateway
+- [ ] **Knowledge Base**: Initialize with ERP documentation
+- [ ] **Monitoring**: Set up Prometheus and Grafana dashboards
+
+**🎉 Ready to use the ERP AI Copilot with step-by-step reasoning and real-time WebSocket streaming!**
 ```
 
 ## 🤝 Contributing

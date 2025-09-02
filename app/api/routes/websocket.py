@@ -2,11 +2,12 @@
 WebSocket API routes for AI Copilot real-time reasoning
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request
 from typing import Dict, Any
 import json
 import logging
 from datetime import datetime
+from pydantic import BaseModel
 
 from app.services.enhanced_chat_service import enhanced_chat_service
 from app.services.auth_service import get_current_user_ws
@@ -15,6 +16,11 @@ from app.models.api import User
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+class TestReasoningRequest(BaseModel):
+    message: str
+    conversation_id: str
+    user_id: str
 
 class ConnectionManager:
     """Manage WebSocket connections"""
@@ -146,3 +152,26 @@ async def websocket_chat_endpoint(
             await websocket.close(code=1011, reason="Internal server error")
         except:
             pass
+
+@router.post("/test-reasoning")
+async def test_reasoning_endpoint(request: TestReasoningRequest):
+    """Test endpoint for reasoning functionality"""
+    try:
+        # Process message with reasoning
+        result = await enhanced_chat_service.process_message_with_reasoning(
+            conversation_id=request.conversation_id,
+            message=request.message,
+            user_id=request.user_id
+        )
+        
+        return {
+            "status": "success",
+            "conversation_id": request.conversation_id,
+            "response": result.get("response"),
+            "reasoning_steps": result.get("reasoning_steps", []),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Test reasoning error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -15,6 +15,8 @@ from prometheus_client.openmetrics.exposition import generate_latest as generate
 
 from app.config.settings import get_settings
 from app.database.connection import init_database, close_database, check_database_health, get_db_manager
+from app.api.health import router as health_router
+from app.core.exceptions import handle_exception, AICopilotException
 from app.services.kafka_service import kafka_service
 from app.services.conversation_service import conversation_service
 from app.services.memory_service import memory_service
@@ -81,9 +83,13 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AI Copilot service", version=settings.service.version, environment=settings.service.environment)
     
     try:
-        # Initialize database connections
-        await init_database()
-        logger.info("Database connections initialized")
+        # Initialize database connections with graceful error handling
+        try:
+            await init_database()
+            logger.info("Database connections initialized")
+        except Exception as e:
+            logger.error("Database initialization failed, service will continue with limited functionality", error=str(e))
+            # Don't fail startup completely if database init fails
         
         # Initialize Kafka service
         await kafka_service.initialize()
@@ -248,13 +254,117 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="AI Copilot Service",
-    description="Enterprise AI Copilot service for ERP systems",
+    title="ERP AI Copilot Service",
+    description="""
+    **Enterprise AI Copilot with Step-by-Step Reasoning**
+    
+    A comprehensive AI assistant for ERP systems featuring:
+    
+    ## 🤖 Core Features
+    - **Step-by-Step Reasoning**: Transparent AI decision-making with real-time streaming
+    - **Multi-Source Integration**: Access to databases, APIs, knowledge base, and system commands
+    - **WebSocket Streaming**: Real-time reasoning steps with visual indicators
+    - **Conversation Management**: Session-based chat with persistent context
+    - **Background Processing**: Async job handling for heavy operations
+    
+    ## 🔧 Technical Capabilities
+    - **Memory & Context**: MongoDB-based user memory and session context
+    - **Knowledge Base**: Automatic documentation indexing with file watching
+    - **API Gateway Integration**: Secure access to ERP service endpoints
+    - **System Commands**: RBAC-enforced command execution
+    - **Third-party APIs**: Secure proxy for external service integration
+    - **Vector Search**: Qdrant-powered semantic search and RAG
+    
+    ## 🌐 WebSocket Endpoints
+    - `/api/v1/websocket/ws/reasoning/{conversation_id}` - Real-time reasoning streaming
+    - `/api/v1/ws/chat/{conversation_id}` - Interactive chat sessions
+    
+    ## 📊 API Categories
+    
+    ### 💬 Conversation Management (`/api/v1/conversations/*`)
+    - `POST /conversations` - Create new conversation session
+    - `GET /conversations` - List user conversations with pagination
+    - `GET /conversations/{id}` - Get conversation with optional messages
+    - `PATCH /conversations/{id}` - Update conversation metadata
+    - `DELETE /conversations/{id}` - Delete conversation
+    - `POST /conversations/{id}/archive` - Archive conversation
+    - `GET /conversations/search` - Search conversations
+    - `GET /conversations/analytics` - Conversation analytics
+    - `GET /conversations/{id}/messages` - Get conversation messages
+    
+    ### 🧠 Memory & Context (`/api/v1/memory/*`)
+    - `POST /memory/store` - Store user memory/context
+    - `GET /memory/retrieve/{id}` - Retrieve specific memory
+    - `GET /memory/search` - Search memories by content
+    - `GET /memory/context/{conversation_id}` - Get conversation context
+    - `DELETE /memory/delete/{id}` - Delete memory
+    - `GET /memory/stats` - Memory usage statistics
+    
+    ### 📚 Knowledge Base (`/api/v1/knowledge-base/*`)
+    - `POST /knowledge-base/initialize` - Initialize knowledge base
+    - `GET /knowledge-base/status` - Get initialization status
+    - `POST /knowledge-base/refresh` - Refresh entire knowledge base
+    - `POST /knowledge-base/add-documentation` - Add new documentation
+    - `GET /knowledge-base/search` - Semantic search knowledge base
+    - `GET /knowledge-base/categories` - Get knowledge categories
+    
+    ### ⚙️ Background Jobs (`/api/v1/background-jobs/*`)
+    - `GET /background-jobs/status` - Job queue status
+    - `GET /background-jobs/job/{id}` - Specific job status
+    - `POST /background-jobs/schedule` - Schedule background job
+    - `DELETE /background-jobs/job/{id}` - Cancel job
+    - `GET /background-jobs/file-watcher/status` - File watcher status
+    - `POST /background-jobs/file-watcher/rescan` - Force file rescan
+    - `POST /background-jobs/knowledge-base/refresh` - Schedule KB refresh
+    - `POST /background-jobs/optimize-context/{user_id}` - Optimize user context
+    
+    ### 🖥️ System Commands (`/api/v1/system-commands/*`)
+    - `POST /system-commands/execute` - Execute system command (RBAC)
+    - `GET /system-commands/permissions` - Get user permissions
+    - `GET /system-commands/history` - Command execution history
+    - `POST /system-commands/validate` - Validate command without execution
+    
+    ### 🌐 Third-party APIs (`/api/v1/third-party-apis/*`)
+    - `POST /third-party-apis/call` - Secure API proxy call
+    - `GET /third-party-apis/available` - Available APIs for user
+    - `POST /third-party-apis/configure` - Configure API credentials
+    - `GET /third-party-apis/usage/{api_name}` - API usage statistics
+    
+    ### 💬 Chat & RAG (`/api/v1/chat/*`, `/api/v1/rag/*`)
+    - `POST /chat/message` - Send chat message with reasoning
+    - `GET /chat/history/{conversation_id}` - Get chat history
+    - `POST /rag/query` - RAG-powered query processing
+    - `GET /rag/status` - RAG system status
+    
+    ### 📊 Infrastructure & Monitoring (`/api/v1/infrastructure/*`)
+    - `GET /infrastructure/health` - System health check
+    - `GET /infrastructure/metrics` - Performance metrics
+    - `GET /infrastructure/services` - Service discovery status
+    """,
     version=settings.service.version,
     docs_url="/docs" if settings.service.debug else None,
     redoc_url="/redoc" if settings.service.debug else None,
     openapi_url="/openapi.json" if settings.service.debug else None,
     lifespan=lifespan,
+    contact={
+        "name": "ERP Suite Development Team",
+        "url": "https://github.com/azad25/erp-suite",
+        "email": "dev@erpsuite.com"
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT"
+    },
+    servers=[
+        {
+            "url": "http://localhost:8003",
+            "description": "Development server"
+        },
+        {
+            "url": "https://api.erpsuite.com",
+            "description": "Production server"
+        }
+    ]
 )
 
 # Add startup event to start gRPC server if needed
@@ -290,6 +400,7 @@ app.add_middleware(
 # app.add_middleware(RateLimitMiddleware)
 
 # Include API routers
+app.include_router(health_router, prefix="/api/v1", tags=["health"])
 app.include_router(conversations_router, prefix="/api/v1/conversations", tags=["conversations"])
 app.include_router(background_jobs_router, prefix="/api/v1/background-jobs", tags=["background-jobs"])
 app.include_router(knowledge_base_router, prefix="/api/v1/knowledge-base", tags=["knowledge-base"])
@@ -383,18 +494,37 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Handle general exceptions."""
-    logger.error("Unhandled exception", path=request.url.path, error=str(exc), exc_info=True)
+@app.exception_handler(AICopilotException)
+async def ai_copilot_exception_handler(request: Request, exc: AICopilotException):
+    """Handle AI Copilot specific exceptions."""
+    logger.warning(
+        "AI Copilot exception",
+        path=request.url.path,
+        error_code=exc.error_code,
+        message=exc.message,
+        status_code=exc.status_code
+    )
+    
+    error_response = handle_exception(exc)
+    error_response["timestamp"] = time.time()
     
     return JSONResponse(
-        status_code=500,
-        content={
-            "error": "internal_error",
-            "message": "Internal server error",
-            "timestamp": time.time(),
-        }
+        status_code=exc.status_code,
+        content=error_response
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions with circuit breaker awareness."""
+    logger.error("Unhandled exception", path=request.url.path, error=str(exc), exc_info=True)
+    
+    error_response = handle_exception(exc)
+    error_response["timestamp"] = time.time()
+    
+    return JSONResponse(
+        status_code=error_response["status_code"],
+        content=error_response
     )
 
 

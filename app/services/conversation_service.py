@@ -122,6 +122,8 @@ class ConversationService:
             "title": conversation_doc["title"],
             "status": conversation_doc["status"],
             "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "message_count": 0,
             "context": context or {},
             "metadata": metadata or {}
         }
@@ -151,6 +153,7 @@ class ConversationService:
                 "title": cached_data["title"],
                 "status": cached_data["status"],
                 "created_at": cached_data["created_at"],
+                "updated_at": cached_data.get("updated_at", cached_data["created_at"]),
                 "context": json.loads(cached_data.get("context", "{}")),
                 "message_count": int(cached_data.get("message_count", 0))
             }
@@ -183,7 +186,7 @@ class ConversationService:
             "title": conversation["title"],
             "status": conversation["status"],
             "created_at": conversation["created_at"].isoformat(),
-            "updated_at": conversation["updated_at"].isoformat(),
+            "updated_at": conversation.get("updated_at", conversation["created_at"]).isoformat(),
             "context": conversation.get("context", {}),
             "metadata": conversation.get("metadata", {}),
             "message_count": conversation.get("message_count", 0)
