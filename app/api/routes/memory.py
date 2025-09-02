@@ -15,6 +15,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+@router.post("/", response_model=Dict[str, Any])
+async def memory_root_endpoint(
+    current_user: User = Depends(get_current_user)
+):
+    """Root memory endpoint for testing"""
+    return {
+        "status": "Memory service is running",
+        "endpoints": [
+            "/store",
+            "/retrieve/{memory_id}",
+            "/search",
+            "/context/{conversation_id}",
+            "/delete/{memory_id}",
+            "/stats"
+        ]
+    }
+
 @router.post("/store", response_model=Dict[str, Any])
 async def store_memory(
     request: MemoryRequest,

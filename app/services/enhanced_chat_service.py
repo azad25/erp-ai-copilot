@@ -641,13 +641,19 @@ Instructions:
 Response:
 """
             
-            response = await llm_service.generate_response(
-                prompt=prompt,
-                max_tokens=1000,  # Limit response length
+            from app.services.llm_service import LLMRequest, LLMMessage
+            
+            request = LLMRequest(
+                messages=[LLMMessage(role="user", content=prompt)],
+                model="gpt-4",
+                max_tokens=1000,
                 temperature=0.7
             )
             
-            return response
+            response = await llm_service.generate(request)
+            response_text = response.content
+            
+            return response_text
             
         except Exception as e:
             logger.error(f"LLM response generation failed: {e}")
@@ -788,13 +794,19 @@ Response:
             Provide a clear, helpful response that incorporates insights from the reasoning steps.
             """
             
-            response = await self.llm_service.generate_response(
-                prompt=prompt,
+            from app.services.llm_service import LLMRequest, LLMMessage
+            
+            request = LLMRequest(
+                messages=[LLMMessage(role="user", content=prompt)],
+                model="gpt-4",
                 max_tokens=1000,
                 temperature=0.7
             )
             
-            return response.get("content", "I apologize, but I couldn't generate a response.")
+            response = await self.llm_service.generate(request)
+            response_text = response.content
+            
+            return response_text
             
         except Exception as e:
             logger.error(f"Failed to generate final response: {e}")
@@ -846,13 +858,19 @@ Response:
             Provide a clear, helpful response that incorporates insights from the reasoning steps.
             """
             
-            response = await self.llm_service.generate_response(
-                prompt=prompt,
+            from app.services.llm_service import LLMRequest, LLMMessage
+            
+            request = LLMRequest(
+                messages=[LLMMessage(role="user", content=prompt)],
+                model="gpt-4",
                 max_tokens=1000,
                 temperature=0.7
             )
             
-            return response.get("content", "I apologize, but I couldn't generate a response.")
+            response = await self.llm_service.generate(request)
+            response_text = response.content
+            
+            return response_text
             
         except Exception as e:
             logger.error(f"Failed to generate final response: {e}")

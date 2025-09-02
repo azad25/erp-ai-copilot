@@ -37,7 +37,7 @@ async def chat(
     start_time = time.time()
     
     try:
-        CHAT_REQUESTS.inc()
+        CHAT_REQUESTS.labels(agent_type=request.agent_type, model=request.model).inc()
         
         # Get or create conversation
         conversation_id = request.conversation_id
@@ -144,7 +144,7 @@ async def chat(
         )
         
     except Exception as e:
-        CHAT_ERRORS.inc()
+        CHAT_ERRORS.labels(agent_type=request.agent_type, error_type="processing_error").inc()
         logger.error(
             "Chat error",
             conversation_id=str(conversation_id) if 'conversation_id' in locals() else None,
@@ -165,7 +165,7 @@ async def chat_stream(
     start_time = time.time()
     
     try:
-        CHAT_REQUESTS.inc()
+        CHAT_REQUESTS.labels(agent_type=request.agent_type, model=request.model).inc()
         
         # Get or create conversation
         conversation_id = request.conversation_id
@@ -295,7 +295,7 @@ async def chat_stream(
         )
         
     except Exception as e:
-        CHAT_ERRORS.inc()
+        CHAT_ERRORS.labels(agent_type=request.agent_type, error_type="streaming_error").inc()
         logger.error("Chat stream error", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate streaming response: {str(e)}")
 

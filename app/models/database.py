@@ -30,7 +30,7 @@ class Conversation(Base):
     user_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), nullable=False)  # References auth service
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     context: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
-    metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    metadata_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=dict, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

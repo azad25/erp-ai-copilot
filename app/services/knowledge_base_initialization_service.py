@@ -40,6 +40,7 @@ class KnowledgeBaseInitializationService:
     def __init__(self):
         self.docs_path = Path("/app/docs")  # Use container path
         self.processed_files: Set[str] = set()
+        self.file_hashes: Dict[str, str] = {}  # Track file content hashes
         self.chunk_size = 1000  # Characters per chunk
         self.chunk_overlap = 200  # Overlap between chunks
         
@@ -48,10 +49,14 @@ class KnowledgeBaseInitializationService:
         try:
             logger.info("Starting knowledge base initialization")
             
+            if not force_refresh:
+                # Load existing file hashes to avoid reprocessing unchanged files
+                await self._load_existing_file_hashes()
+            
             if force_refresh:
                 await self._clear_existing_knowledge()
             
-            # Process all documentation files
+            # Process all documentation files (with change detection)
             await self._process_docs_folder()
             
             # Process ERP architecture documentation
@@ -60,8 +65,12 @@ class KnowledgeBaseInitializationService:
             # Index API endpoints and service documentation
             await self._index_api_endpoints()
             
-            # Create summary knowledge entries
-            await self._create_summary_entries()
+            # Create summary knowledge entries (only if new files processed)
+            if self.processed_files or force_refresh:
+                await self._create_summary_entries()
+            
+            # Save file hashes for future runs
+            await self._save_file_hashes()
             
             logger.info(f"Knowledge base initialization completed. Processed {len(self.processed_files)} files")
             
@@ -108,10 +117,23 @@ class KnowledgeBaseInitializationService:
             await self._process_markdown_file(md_file)
     
     async def _process_markdown_file(self, file_path: Path):
-        """Process a single markdown file"""
+        """Process a single markdown file with change detection"""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+            
+            # Calculate file hash to detect changes
+            file_hash = hashlib.md5(content.encode()).hexdigest()
+            file_key = str(file_path)
+            
+            # Skip if file hasn't changed since last processing
+            if file_key in self.file_hashes and self.file_hashes[file_key] == file_hash:
+                logger.debug(f"Skipping unchanged file: {file_path.name}")
+                return
+            
+            # Remove existing entries for this file if it was processed before
+            if file_key in self.file_hashes:
+                await self._remove_file_from_knowledge_base(file_key)
             
             # Extract metadata
             metadata = self._extract_file_metadata(file_path, content)
@@ -129,7 +151,9 @@ class KnowledgeBaseInitializationService:
                     metadata=metadata
                 )
             
+            # Update tracking
             self.processed_files.add(str(file_path))
+            self.file_hashes[file_key] = file_hash
             logger.info(f"Processed {file_path.name} - {len(chunks)} chunks")
             
         except Exception as e:
@@ -395,6 +419,76 @@ class KnowledgeBaseInitializationService:
             )
         
         logger.info("Created summary knowledge entries")
+    
+    async def _load_existing_file_hashes(self):
+        """Load existing file hashes from MongoDB to detect changes"""
+        try:
+            mongodb = await get_mongodb()
+            
+            # Get file hashes from knowledge base metadata
+            cursor = mongodb.knowledge_base.find(
+                {"metadata.file_hash": {"$exists": True}},
+                {"source": 1, "metadata.file_hash": 1}
+            )
+            
+            async for doc in cursor:
+                if "source" in doc and "metadata" in doc and "file_hash" in doc["metadata"]:
+                    self.file_hashes[doc["source"]] = doc["metadata"]["file_hash"]
+            
+            logger.info(f"Loaded {len(self.file_hashes)} existing file hashes")
+            
+        except Exception as e:
+            logger.warning(f"Failed to load existing file hashes: {e}")
+            self.file_hashes = {}
+    
+    async def _save_file_hashes(self):
+        """Save current file hashes to MongoDB for future change detection"""
+        try:
+            mongodb = await get_mongodb()
+            
+            # Update knowledge base entries with file hashes
+            for file_path, file_hash in self.file_hashes.items():
+                await mongodb.knowledge_base.update_many(
+                    {"source": file_path},
+                    {"$set": {"metadata.file_hash": file_hash}}
+                )
+            
+            logger.info(f"Saved {len(self.file_hashes)} file hashes")
+            
+        except Exception as e:
+            logger.error(f"Failed to save file hashes: {e}")
+    
+    async def _remove_file_from_knowledge_base(self, file_path: str):
+        """Remove existing knowledge base entries for a file"""
+        try:
+            mongodb = await get_mongodb()
+            qdrant = await get_qdrant()
+            
+            # Get existing entries to remove from Qdrant
+            cursor = mongodb.knowledge_base.find({"source": file_path})
+            qdrant_ids = []
+            
+            async for doc in cursor:
+                if "metadata" in doc and "chunk_id" in doc["metadata"]:
+                    qdrant_ids.append(doc["metadata"]["chunk_id"])
+            
+            # Remove from MongoDB
+            result = await mongodb.knowledge_base.delete_many({"source": file_path})
+            
+            # Remove from Qdrant
+            if qdrant_ids and qdrant:
+                try:
+                    await qdrant.delete(
+                        collection_name="erp_knowledge",
+                        points_selector={"ids": qdrant_ids}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to remove vectors from Qdrant: {e}")
+            
+            logger.info(f"Removed {result.deleted_count} entries for {file_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to remove file from knowledge base: {e}")
     
     def _generate_architecture_summary(self) -> str:
         """Generate ERP architecture summary"""

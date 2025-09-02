@@ -474,21 +474,43 @@ class ReasoningEngine:
             return {"error": str(e)}
     
     async def _perform_vector_search(self, message: str) -> Dict[str, Any]:
-        """Perform vector similarity search"""
+        """Perform vector similarity search on knowledge base"""
         try:
-            # Simulate vector search
-            await asyncio.sleep(0.2)
-            return {
-                "documents_found": 5,
-                "similarity_threshold": 0.8,
-                "top_matches": [
-                    {"title": "ERP User Guide", "similarity": 0.92},
-                    {"title": "Sales Process Documentation", "similarity": 0.87}
-                ]
-            }
+            from app.services.memory_service import memory_service
+            
+            # Actually search the knowledge base using vector similarity
+            results = await memory_service.search_knowledge(
+                query=message,
+                limit=5,
+                similarity_threshold=0.7
+            )
+            
+            if results:
+                return {
+                    "documents_found": len(results),
+                    "similarity_threshold": 0.7,
+                    "top_matches": [
+                        {
+                            "title": result.get("title", "Unknown"),
+                            "similarity": result.get("similarity", 0.0),
+                            "content_preview": result.get("content", "")[:200] + "...",
+                            "source": result.get("source", "Unknown"),
+                            "category": result.get("category", "documentation")
+                        }
+                        for result in results
+                    ]
+                }
+            else:
+                return {
+                    "documents_found": 0,
+                    "similarity_threshold": 0.7,
+                    "top_matches": [],
+                    "message": "No relevant knowledge base entries found"
+                }
+                
         except Exception as e:
             logging.error(f"Error in vector search: {e}")
-            return {"error": str(e)}
+            return {"error": str(e), "fallback": "knowledge_base_unavailable"}
     
     async def _check_cache(self, message: str, user_id: str) -> Dict[str, Any]:
         """Check Redis cache for similar queries"""

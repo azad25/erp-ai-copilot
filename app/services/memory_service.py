@@ -376,7 +376,7 @@ class MemoryService:
         })
         
         if existing:
-            # Update existing entry
+            # Update existing entry and reuse existing embedding
             await self.mongodb.knowledge_base.update_one(
                 {"_id": existing["_id"]},
                 {
@@ -387,9 +387,10 @@ class MemoryService:
                     }
                 }
             )
+            logger.debug(f"Reusing existing knowledge entry and embedding: {existing['entry_id']}")
             return existing["entry_id"]
         
-        # Generate embedding for the content
+        # Generate embedding for new content only
         embedding = await self._generate_embedding(f"{title}\n\n{content}")
         
         entry_doc = {
