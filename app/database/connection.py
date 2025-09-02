@@ -247,13 +247,13 @@ class DatabaseManager:
     
     def get_mongodb_database(self) -> 'motor.motor_asyncio.AsyncIOMotorDatabase':
         """Get MongoDB database instance."""
-        if not self.mongodb_client:
+        if self.mongodb_client is None:
             raise RuntimeError("MongoDB not initialized")
         return self.mongodb_client[settings.MONGODB_DATABASE]
         
     def get_mongo_client(self) -> 'motor.motor_asyncio.AsyncIOMotorClient':
         """Get MongoDB client."""
-        if not self.mongodb_client:
+        if self.mongodb_client is None:
             raise RuntimeError("MongoDB not initialized")
         return self.mongodb_client
     
@@ -286,7 +286,7 @@ class DatabaseManager:
                 await self.postgres_engine.dispose()
                 logger.info("PostgreSQL connections closed")
             
-            if self.mongodb_client:
+            if self.mongodb_client is not None:
                 self.mongodb_client.close()
                 logger.info("MongoDB connections closed")
             
@@ -327,7 +327,7 @@ class DatabaseManager:
         
         # Check MongoDB
         try:
-            if self.mongodb_client:
+            if self.mongodb_client is not None:
                 await self.mongodb_client.admin.command('ping')
                 health_status["mongodb"]["status"] = "healthy"
             else:
@@ -383,7 +383,7 @@ async def get_redis():
 
 async def get_qdrant():
     """Dependency to get Qdrant client."""
-    return db_manager.get_qdrant_client()
+    return await db_manager.get_qdrant_client()
 
 
 async def init_database():

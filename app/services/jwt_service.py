@@ -122,6 +122,10 @@ def get_jwt_service() -> Optional[JWTService]:
     return _jwt_service
 
 
+# Initialize default service instance
+jwt_service = JWTService("default-secret-key", "HS256")
+
+
 def validate_token_locally(token: str) -> Optional[Dict[str, Any]]:
     """
     Validate token using the global JWT service.

@@ -25,6 +25,7 @@ from app.database.connection import get_db_session
 from app.core.exceptions import ChatError, ValidationError, RateLimitError
 from app.agents.agent_orchestrator import AgentOrchestrator
 from app.agents.base_agent import AgentRequest, AgentResponse
+from app.services.reasoning_engine import ReasoningEngine
 
 
 @dataclass
@@ -64,6 +65,7 @@ class ChatService:
         """
         self.db = db_session
         self.orchestrator = AgentOrchestrator()
+        self.reasoning_engine = ReasoningEngine()
         self.active_conversations: Dict[str, ConversationContext] = {}
         self.rate_limits: Dict[str, Dict[str, Any]] = {}
         self.conversation_timeout = 3600  # 1 hour
@@ -199,7 +201,7 @@ class ChatService:
                                 message: str, message_type: MessageType = MessageType.TEXT,
                                 metadata: Dict[str, Any] = None) -> AsyncGenerator[ChatStreamResponse, None]:
         """
-        Send a message and get streaming AI response
+        Send a message and get streaming AI response with reasoning steps
         
         Args:
             conversation_id: Target conversation ID
@@ -209,8 +211,16 @@ class ChatService:
             metadata: Additional message metadata
             
         Yields:
-            Streaming response chunks
+            Streaming response chunks including reasoning steps
         """
+        # Initialize conversation context if not exists
+        if conversation_id not in self.active_conversations:
+            self.active_conversations[conversation_id] = ConversationContext(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                context_data={}
+            )
+        
         # Validate conversation access
         if not await self._validate_conversation_access(conversation_id, user_id):
             raise ValidationError("Invalid conversation or access denied")
@@ -231,11 +241,50 @@ class ChatService:
             message_id=str(uuid.uuid4())
         )
         
-        # Process message with streaming AI
-        async for chunk in self._process_message_streaming(
-            conversation_id, user_id, message, metadata
+        # Process message with reasoning engine streaming
+        final_response_content = ""
+        async for reasoning_chunk in self.reasoning_engine.process_with_reasoning(
+            message, conversation_id, user_id, metadata or {}
         ):
-            yield chunk
+            if reasoning_chunk.get("type") == "reasoning_step":
+                # Stream reasoning step
+                yield ChatStreamResponse(
+                    type="reasoning_step",
+                    content=json.dumps(reasoning_chunk),
+                    conversation_id=conversation_id,
+                    message_id=str(uuid.uuid4()),
+                    metadata=reasoning_chunk
+                )
+            elif reasoning_chunk.get("type") == "final_response":
+                # Stream final response
+                final_response_content = reasoning_chunk.get("content", "")
+                words = final_response_content.split()
+                for i, word in enumerate(words):
+                    yield ChatStreamResponse(
+                        type="chunk",
+                        content=word + " ",
+                        conversation_id=conversation_id,
+                        message_id=str(uuid.uuid4()),
+                        is_complete=i == len(words) - 1,
+                        metadata=reasoning_chunk.get("metadata", {})
+                    )
+                    await asyncio.sleep(0.05)  # Simulate typing
+            elif reasoning_chunk.get("type") == "error":
+                # Stream error response
+                yield ChatStreamResponse(
+                    type="error",
+                    content=reasoning_chunk.get("content", "An error occurred"),
+                    conversation_id=conversation_id,
+                    message_id=str(uuid.uuid4()),
+                    metadata={"error": reasoning_chunk.get("error")}
+                )
+        
+        # Store AI response
+        if final_response_content:
+            await self._store_message(
+                conversation_id, "assistant", final_response_content, MessageType.TEXT,
+                {"reasoning_enabled": True, "tokens_used": len(final_response_content.split())}
+            )
         
         # Update conversation context
         self.active_conversations[conversation_id].message_count += 2

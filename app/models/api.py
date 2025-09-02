@@ -592,3 +592,66 @@ class ContainerActionResponse(BaseModel):
     success: bool
     data: Dict[str, Any]
     message: str
+
+
+# Memory Models
+class MemoryRequest(BaseModel):
+    """Memory request model."""
+    content: str = Field(..., description="Memory content")
+    context: Optional[Dict[str, Any]] = Field(default=None, description="Memory context")
+    importance: int = Field(default=1, ge=1, le=10, description="Memory importance (1-10)")
+    tags: List[str] = Field(default_factory=list, description="Memory tags")
+
+
+class MemoryResponse(BaseModel):
+    """Memory response model."""
+    id: str = Field(description="Memory ID")
+    content: str = Field(description="Memory content")
+    context: Optional[Dict[str, Any]] = Field(default=None)
+    importance: int = Field(description="Memory importance")
+    tags: List[str] = Field(description="Memory tags")
+    created_at: datetime = Field(description="Creation timestamp")
+    updated_at: datetime = Field(description="Update timestamp")
+
+
+# System Command Models
+class SystemCommandRequest(BaseModel):
+    """System command execution request"""
+    command: str = Field(description="Command to execute")
+    args: Optional[List[str]] = Field(default=None, description="Command arguments")
+    working_directory: Optional[str] = Field(default=None, description="Working directory")
+    timeout: int = Field(default=30, description="Command timeout in seconds")
+    user_role: str = Field(description="User role for RBAC validation")
+
+
+class SystemCommandResponse(BaseModel):
+    """System command execution response"""
+    success: bool = Field(description="Whether command executed successfully")
+    exit_code: int = Field(description="Command exit code")
+    stdout: str = Field(description="Standard output")
+    stderr: str = Field(description="Standard error")
+    execution_time: float = Field(description="Execution time in seconds")
+    command: str = Field(description="Executed command")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Third-party API Models
+class ThirdPartyAPIRequest(BaseModel):
+    """Third-party API request model"""
+    provider: str = Field(description="API provider name")
+    endpoint: str = Field(description="API endpoint")
+    method: str = Field(default="GET", description="HTTP method")
+    headers: Optional[Dict[str, str]] = Field(default=None, description="Request headers")
+    params: Optional[Dict[str, Any]] = Field(default=None, description="Query parameters")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="Request body data")
+    user_id: str = Field(description="User ID for rate limiting")
+
+
+class ThirdPartyAPIResponse(BaseModel):
+    """Third-party API response model"""
+    success: bool = Field(description="Whether request was successful")
+    status_code: int = Field(description="HTTP status code")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="Response data")
+    error: Optional[str] = Field(default=None, description="Error message")
+    rate_limit_remaining: Optional[int] = Field(default=None, description="Remaining rate limit")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)

@@ -35,6 +35,8 @@ class TokenCacheService:
     
     def _get_token_hash(self, token: str) -> str:
         """Generate a hash for the token to use as cache key."""
+        if not isinstance(token, str):
+            raise ValueError(f"Token must be a string, got {type(token)}")
         return hashlib.sha256(token.encode()).hexdigest()
     
     def _get_cache_key(self, token: str) -> str:
@@ -52,7 +54,8 @@ class TokenCacheService:
         Returns:
             Dict containing cached user info if found, None otherwise
         """
-        if not token:
+        if not token or not isinstance(token, str):
+            logger.warning(f"Invalid token type for cache lookup: {type(token)}")
             return None
         
         try:
@@ -303,6 +306,23 @@ def initialize_token_cache_service(redis_client: redis.Redis, cache_ttl_minutes:
 def get_token_cache_service() -> Optional[TokenCacheService]:
     """Get the global token cache service instance."""
     return _token_cache_service
+
+
+# Initialize default service instance for import compatibility
+from app.database.connection import get_redis
+import asyncio
+
+async def _init_default_service():
+    redis_client = await get_redis()
+    return TokenCacheService(redis_client, 30)
+
+# Create a default instance
+token_cache_service = None
+try:
+    # This will be properly initialized when the app starts
+    token_cache_service = TokenCacheService(None, 30)
+except:
+    pass
 
 
 async def validate_token_with_cache(token: str) -> Optional[Dict[str, Any]]:

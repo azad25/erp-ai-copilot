@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.core.config import settings
+from app.config.settings import get_settings
 from app.database.connection import get_db_session
 from app.clients.auth_grpc import get_auth_service_client
 from app.services.token_cache_service import validate_token_with_cache
@@ -152,3 +152,36 @@ async def get_optional_user(
         return await get_current_user(credentials, db)
     except HTTPException:
         return None
+
+
+class AuthService:
+    """
+    Authentication Service Class
+    
+    Provides authentication and authorization functionality for AI Copilot.
+    """
+    
+    def __init__(self):
+        self.security = HTTPBearer()
+    
+    async def get_current_user(
+        self, 
+        credentials: HTTPAuthorizationCredentials,
+        db: AsyncSession = None
+    ) -> User:
+        """Get current authenticated user"""
+        return await get_current_user(credentials, db)
+    
+    async def get_current_user_ws(self, token: str) -> Optional[Dict[str, Any]]:
+        """Get current user from WebSocket token"""
+        return await get_current_user_ws(token)
+
+
+# WebSocket authentication function  
+async def get_current_user_ws(token: str) -> Optional[Dict[str, Any]]:
+    """Get current user from WebSocket token"""
+    return await validate_token_with_cache(token)
+
+
+# Global auth service instance
+auth_service = AuthService()

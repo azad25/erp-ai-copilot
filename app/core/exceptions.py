@@ -289,6 +289,18 @@ class ConcurrencyError(AICopilotException):
         )
 
 
+class ServiceError(AICopilotException):
+    """General service operation errors."""
+    
+    def __init__(self, service: str, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"Service error in {service}: {message}",
+            error_code="SERVICE_ERROR",
+            details=details or {"service": service},
+            status_code=500
+        )
+
+
 def handle_exception(exc: Exception) -> Dict[str, Any]:
     """Convert any exception to a standardized error response."""
     if isinstance(exc, AICopilotException):

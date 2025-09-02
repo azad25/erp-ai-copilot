@@ -16,9 +16,28 @@ from prometheus_client.openmetrics.exposition import generate_latest as generate
 from app.config.settings import get_settings
 from app.database.connection import init_database, close_database, check_database_health, get_db_manager
 from app.services.kafka_service import kafka_service
+from app.services.conversation_service import conversation_service
+from app.services.memory_service import memory_service
+from app.services.api_gateway_client import api_gateway_client
+from app.services.kafka_integration_service import kafka_service as kafka_integration
+from app.services.service_discovery_service import service_discovery
+from app.services.user_preferences_service import user_preferences_service
+from app.services.third_party_api_service import third_party_api_service
+from app.services.system_command_service import system_command_service
 from app.api.v1.router import api_router
+from app.api.routes import conversations, background_jobs, websocket, memory, system_commands, third_party_apis
+try:
+    from app.api.routes import grpc_router
+except ImportError:
+    grpc_router = None
+from app.api.websocket_handler import websocket_handler
+from app.services.knowledge_base_initialization_service import knowledge_base_init_service
+from app.services.background_job_service import background_job_service
+from app.services.file_watcher_service import file_watcher_service
+from app.api.routes.conversations import router as conversations_router
 from app.api.websocket.router import router as websocket_router
-from app.api.grpc import grpc_router
+from app.api.routes.knowledge_base import router as knowledge_base_router
+from app.api.routes.background_jobs import router as background_jobs_router
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.core.metrics import setup_metrics
@@ -140,6 +159,42 @@ async def lifespan(app: FastAPI):
             if settings.service.debug:
                 raise
         
+        # Start background job service
+        try:
+            await background_job_service.start()
+            logger.info("Background job service started")
+        except Exception as e:
+            logger.error("Failed to start background job service", error=str(e))
+        
+        # Start file watcher service
+        try:
+            await file_watcher_service.start_monitoring()
+            logger.info("File watcher service started")
+        except Exception as e:
+            logger.error("Failed to start file watcher service", error=str(e))
+        
+        # Initialize knowledge base from documentation (only if not already initialized)
+        try:
+            db_manager = await get_db_manager()
+            if db_manager.mongodb_client is not None:
+                status = await knowledge_base_init_service.get_initialization_status()
+            else:
+                status = {"status": "not_initialized", "total_knowledge_entries": 0}
+            if status.get("status") != "ready" or status.get("total_knowledge_entries", 0) == 0:
+                logger.info("Scheduling knowledge base initialization...")
+                # Schedule as background job instead of blocking startup
+                await background_job_service.schedule_job(
+                    job_type="initialize_knowledge_base",
+                    function_name="refresh_knowledge_base",
+                    priority=background_job_service.JobPriority.HIGH
+                )
+                logger.info("Knowledge base initialization scheduled")
+            else:
+                logger.info(f"Knowledge base already initialized with {status.get('total_knowledge_entries', 0)} entries")
+        except Exception as e:
+            logger.error("Failed to initialize knowledge base", error=str(e))
+            # Don't fail startup if knowledge base init fails
+        
         # Initialize gRPC clients
         try:
             # Initialize auth service client
@@ -171,6 +226,14 @@ async def lifespan(app: FastAPI):
         
         # Close gRPC clients
         await close_auth_service_client()
+        
+        # Stop file watcher service
+        if file_watcher_service:
+            await file_watcher_service.stop_monitoring()
+        
+        # Stop background job service
+        if background_job_service:
+            await background_job_service.stop()
         
         # Close Kafka service
         if kafka_service:
@@ -226,16 +289,27 @@ app.add_middleware(
 # app.add_middleware(LoggingMiddleware)
 # app.add_middleware(RateLimitMiddleware)
 
-# Include API router
+# Include API routers
+app.include_router(conversations_router, prefix="/api/v1/conversations", tags=["conversations"])
+app.include_router(background_jobs_router, prefix="/api/v1/background-jobs", tags=["background-jobs"])
+app.include_router(knowledge_base_router, prefix="/api/v1/knowledge-base", tags=["knowledge-base"])
+app.include_router(websocket_router, prefix="/api/v1/ws", tags=["websocket"])
+app.include_router(websocket.router, prefix="/api/v1/websocket", tags=["websocket-reasoning"])
+app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
+app.include_router(system_commands.router, prefix="/api/v1/system-commands", tags=["system-commands"])
+app.include_router(third_party_apis.router, prefix="/api/v1/third-party-apis", tags=["third-party-apis"])
 app.include_router(api_router, prefix="/api/v1")
 
-# Include WebSocket router
-app.include_router(websocket_router, prefix="")
+if grpc_router:
+    app.include_router(grpc_router, prefix="/api/v1/grpc", tags=["grpc"])
 
 # Include gRPC router if enabled
-if settings.service.mode in ["grpc", "both"]:
-    app.include_router(grpc_router, prefix="/grpc")
-
+try:
+    from app.api.grpc import grpc_router
+    if settings.service.mode in ["grpc", "both"]:
+        app.include_router(grpc_router, prefix="/grpc")
+except ImportError:
+    logger.warning("gRPC router not available")
 
 # Temporarily disable HTTP middleware that interferes with WebSocket connections
 # @app.middleware("http")
@@ -327,23 +401,47 @@ async def general_exception_handler(request: Request, exc: Exception):
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {
-        "message": "AI Copilot Service is running",
-        "version": settings.service.version,
-        "status": "healthy",
-        "timestamp": time.time()
-    }
+    return {"message": "AI Copilot Service is running", "version": "1.0.0"}
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    db_health = await check_database_health()
-    
+    try:
+        # Check database connectivity
+        db_status = await check_database_health()
+        
+        return {
+            "status": "ok",
+            "service": "ai-copilot",
+            "timestamp": time.time(),
+            "database": db_status,
+            "version": settings.service.version
+        }
+    except Exception as e:
+        logger.error("Health check failed", error=str(e))
+        raise HTTPException(status_code=503, detail="Service unhealthy")
+
+
+@app.get("/status")
+async def service_status():
+    """Service status endpoint for debugging."""
     return {
-        "status": "healthy",
-        "database": db_health,
-        "timestamp": time.time()
+        "service": "ai-copilot",
+        "status": "running",
+        "features": {
+            "websocket_reasoning": True,
+            "background_jobs": True,
+            "knowledge_base": True,
+            "conversation_management": True,
+            "file_watcher": True
+        },
+        "endpoints": {
+            "conversations": "/conversations",
+            "knowledge_base": "/knowledge-base",
+            "background_jobs": "/background-jobs",
+            "websocket": "/ws/chat"
+        }
     }
 
 

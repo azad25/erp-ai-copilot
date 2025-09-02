@@ -137,6 +137,10 @@ class APIGatewaySettings(BaseSettings):
     timeout: int = Field(default=30, env="API_GATEWAY_TIMEOUT")
     max_retries: int = Field(default=3, env="API_GATEWAY_MAX_RETRIES")
     
+    # Root admin credentials for AI Copilot internal authentication
+    admin_email: str = Field(default="admin@unibaseerp.com", env="API_GATEWAY_ADMIN_EMAIL")
+    admin_password: str = Field(default="admin123", env="API_GATEWAY_ADMIN_PASSWORD")
+    
     class Config:
         env_prefix = "API_GATEWAY_"
 
@@ -252,7 +256,7 @@ class ServiceSettings(BaseSettings):
     name: str = Field(default="ai-copilot", env="SERVICE_NAME")
     version: str = Field(default="1.0.0", env="SERVICE_VERSION")
     environment: str = Field(default="development", env="ENVIRONMENT")
-    debug: bool = Field(default=False, env="DEBUG")
+    debug: bool = Field(default=True, env="DEBUG")
     host: str = Field(default="0.0.0.0", env="HOST")
     port: int = Field(default=8003, env="PORT")
     mode: str = Field(default="http", env="SERVICE_MODE", 
