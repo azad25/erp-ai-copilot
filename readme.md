@@ -174,8 +174,8 @@ A sophisticated, enterprise-grade AI copilot service with **step-by-step reasoni
 
 ### Infrastructure & Monitoring
 - **Docker & Docker Compose**: Containerization and orchestration
-- **Prometheus**: Metrics collection and monitoring
-- **Grafana**: Visualization and alerting dashboards
+- **Circuit Breakers**: Resilience patterns for service failures
+- **Connection Health Monitoring**: Real-time service connectivity diagnostics
 - **RBAC**: Role-based access control for security
 - **SQLAlchemy**: Database ORM with async support
 - **Motor**: Async MongoDB driver
@@ -197,6 +197,63 @@ A sophisticated, enterprise-grade AI copilot service with **step-by-step reasoni
 - **Kafka**: Event streaming
 - **Prometheus**: Metrics and monitoring
 - **Structlog**: Structured logging
+
+## 🔧 Connection Troubleshooting
+
+### Common Connection Issues
+
+#### Docker API Connection Error
+**Error**: `unsupported URL scheme "http+docker"`
+
+**Solution**: The service discovery now includes multiple fallback methods:
+1. Environment-based Docker client (`docker.from_env()`)
+2. Direct socket connection (`unix:///var/run/docker.sock`)
+3. TCP connection for Docker-in-Docker scenarios
+4. Static service registration fallback
+
+#### API Gateway Hostname Resolution
+**Error**: `Name or service not known: api-gateway`
+
+**Solution**: 
+- Ensure all services are on the `erp-network` Docker network
+- Use container names for internal communication (`api-gateway:8000`)
+- Added DNS caching and connection resilience
+
+### Testing Connections
+
+```bash
+# Test all connections
+./test-ai-copilot-connections.sh
+
+# Test specific components
+./test-ai-copilot-connections.sh network
+./test-ai-copilot-connections.sh api-gateway
+./test-ai-copilot-connections.sh discovery
+
+# Test from within AI Copilot container
+docker exec erp-suite-ai-copilot python scripts/test_connections.py
+```
+
+### Health Check Endpoints
+
+```bash
+# Basic health check
+curl http://localhost:8003/health
+
+# Detailed health with connection diagnostics
+curl http://localhost:8003/health/detailed
+
+# Connection-specific diagnostics
+curl http://localhost:8003/health/connections
+```
+
+### Docker Compose Configuration
+
+The `docker-compose.override.yml` file includes:
+- Proper network configuration
+- Docker socket mounting for service discovery
+- Correct hostname resolution settings
+- Connection timeout and retry configurations
 
 ## 📋 Prerequisites
 

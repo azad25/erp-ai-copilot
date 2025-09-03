@@ -191,7 +191,18 @@ class BaseAgent(ABC):
                 session_id=request.session_id
             )
             self._stats["total_errors"] += 1
-            raise AgentError(f"Failed to process request: {str(e)}")
+            
+            # Return graceful fallback response instead of raising error
+            return AgentResponse(
+                content="I apologize, but I'm experiencing technical difficulties. Please try rephrasing your request or try again in a moment.",
+                session_id=request.session_id,
+                model_used="fallback",
+                metadata={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "fallback_response": True
+                }
+            )
 
     async def process_request_stream(
         self, 
@@ -261,7 +272,7 @@ class BaseAgent(ABC):
                 agent=self.name,
                 session_id=request.session_id
             )
-            raise AgentError(f"Failed to process streaming request: {str(e)}")
+            raise AgentError("streaming_processing", "process", f"Failed to process streaming request: {str(e)}")
 
     def _get_or_create_memory(self, session_id: str) -> AgentMemory:
         """Get existing memory or create new one for session"""

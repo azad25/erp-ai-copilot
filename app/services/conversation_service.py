@@ -44,7 +44,12 @@ class ConversationService:
     async def initialize(self):
         """Initialize database connections"""
         self.mongodb = await get_mongodb()
-        self.redis = await get_redis()
+        try:
+            self.redis = await get_redis()
+            logger.info("Redis connection established successfully")
+        except Exception as e:
+            logger.warning(f"Redis connection failed, continuing without cache: {e}")
+            self.redis = None
         
     async def create_conversation(
         self, 
@@ -80,7 +85,6 @@ class ConversationService:
         now = datetime.utcnow()
         
         conversation_doc = {
-            "_id": ObjectId(),
             "conversation_id": conversation_id,
             "organization_id": organization_id,
             "user_id": user_id,
@@ -141,22 +145,35 @@ class ConversationService:
         if self.mongodb is None:
             await self.initialize()
             
-        # Try Redis cache first
+        # Try Redis cache first (if available)
         cache_key = f"conversation:{conversation_id}"
-        cached_data = await self.redis.hgetall(cache_key)
-        
-        if cached_data:
-            return {
-                "conversation_id": cached_data["conversation_id"],
-                "user_id": cached_data["user_id"],
-                "organization_id": cached_data["organization_id"],
-                "title": cached_data["title"],
-                "status": cached_data["status"],
-                "created_at": cached_data["created_at"],
-                "updated_at": cached_data.get("updated_at", cached_data["created_at"]),
-                "context": json.loads(cached_data.get("context", "{}")),
-                "message_count": int(cached_data.get("message_count", 0))
-            }
+        try:
+            if self.redis:
+                cached_data = await self.redis.hgetall(cache_key)
+            else:
+                cached_data = None
+            
+            # Validate cache data has required fields
+            required_fields = ["conversation_id", "user_id", "organization_id", "title", "status", "created_at"]
+            if cached_data and all(field in cached_data for field in required_fields):
+                return {
+                    "conversation_id": cached_data["conversation_id"],
+                    "user_id": cached_data["user_id"],
+                    "organization_id": cached_data["organization_id"],
+                    "title": cached_data["title"],
+                    "status": cached_data["status"],
+                    "created_at": cached_data["created_at"],
+                    "updated_at": cached_data.get("updated_at", cached_data["created_at"]),
+                    "context": json.loads(cached_data.get("context", "{}")),
+                    "message_count": int(cached_data.get("message_count", 0))
+                }
+            elif cached_data:
+                # Cache exists but is incomplete, clear it
+                logger.warning(f"Incomplete cached data for conversation {conversation_id}, clearing cache")
+                await self.redis.delete(cache_key)
+        except Exception as e:
+            logger.warning(f"Redis cache error for conversation {conversation_id}: {str(e)}")
+            # Continue to MongoDB fallback
         
         # Fallback to MongoDB
         conversation = await self.mongodb.conversations.find_one(

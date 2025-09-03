@@ -36,14 +36,20 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection
     """
+    import structlog
+    logger = structlog.get_logger(__name__)
+    
     try:
         # Accept the connection first to avoid 403 errors
         await websocket.accept()
+        logger.info("WebSocket connection accepted")
         
         # Extract token from query parameters
         token = websocket.query_params.get("token")
+        logger.info(f"Token extracted: {'present' if token else 'missing'}")
         
         if not token:
+            logger.error("No token provided in WebSocket connection")
             await websocket.send_json({
                 "type": "error",
                 "message": "Authentication token is required"
@@ -52,16 +58,19 @@ async def websocket_endpoint(websocket: WebSocket):
             return
         
         # Use the WebSocket service to handle the connection (skip accept since we already did it)
+        logger.info("Calling handle_authenticated_connection")
         await websocket_service.handle_authenticated_connection(websocket, token)
         
     except Exception as e:
+        logger.error(f"WebSocket endpoint error: {str(e)}", exc_info=True)
         try:
             await websocket.send_json({
                 "type": "error", 
                 "message": f"Connection failed: {str(e)}"
             })
             await websocket.close(code=1011, reason="Internal error")
-        except:
+        except Exception as close_error:
+            logger.error(f"Failed to close WebSocket properly: {str(close_error)}")
             pass
 
 @router.get("/health")

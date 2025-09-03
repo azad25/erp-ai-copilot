@@ -4,7 +4,10 @@ JWT Token Service for local token validation.
 This service handles JWT token decoding and validation locally without
 requiring gRPC calls to the auth service on every request.
 """
-import jwt
+try:
+    import jwt
+except ImportError:
+    jwt = None
 import logging
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
@@ -12,18 +15,13 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-
 class JWTService:
     """Service for local JWT token validation."""
     
     def __init__(self, secret_key: str, algorithm: str = "HS256"):
-        """
-        Initialize JWT service with secret key.
-        
-        Args:
-            secret_key: JWT secret key for token validation
-            algorithm: JWT algorithm (default: HS256)
-        """
+        """Initialize JWT service with secret key and algorithm."""
+        if jwt is None:
+            logger.warning("JWT library not available, token validation will be disabled")
         self.secret_key = secret_key
         self.algorithm = algorithm
         logger.info("JWT service initialized", algorithm=algorithm)
@@ -64,8 +62,10 @@ class JWTService:
                     return None
             
             logger.info("Token decoded successfully", 
-                       user_id=payload.get("user_id"),
-                       organization_id=payload.get("organization_id"))
+                       user_id=payload.get("user_id") or payload.get("sub"),
+                       organization_id=payload.get("organization_id"),
+                       issuer=payload.get("iss"),
+                       audience=payload.get("aud"))
             
             return payload
             
@@ -94,7 +94,8 @@ class JWTService:
             return None
         
         return {
-            "id": payload.get("user_id"),
+            "id": payload.get("user_id") or payload.get("sub"),
+            "user_id": payload.get("user_id") or payload.get("sub"),
             "organization_id": payload.get("organization_id"),
             "email": payload.get("email"),
             "is_active": True,  # Assume active if token is valid

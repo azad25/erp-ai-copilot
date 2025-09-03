@@ -9,6 +9,7 @@ from app.database.connection import check_database_health
 from app.core.circuit_breaker import circuit_manager
 from app.core.resilience import health_checker, degradation_manager
 from app.core.exceptions import handle_exception
+from app.services.connection_health_service import connection_health_service
 
 logger = structlog.get_logger(__name__)
 
@@ -33,23 +34,28 @@ async def health_check() -> Dict[str, Any]:
 async def detailed_health_check() -> Dict[str, Any]:
     """Detailed health check including all services and circuit breakers."""
     try:
-        # Get comprehensive health status
-        health_status = await health_checker.check_all_services()
+        # Get comprehensive health status from both sources
+        circuit_health = await health_checker.check_all_services()
+        connection_health = await connection_health_service.check_all_connections()
         
-        # Add additional service information
-        health_status.update({
+        # Merge health statuses
+        health_status = {
             "service": "ai-copilot",
             "timestamp": None,  # Will be set by middleware
-            "version": "1.0.0"  # Could be read from config
-        })
+            "version": "1.0.0",
+            "circuit_breakers": circuit_health,
+            "connections": connection_health,
+            "diagnostics": await connection_health_service.diagnose_connection_issues()
+        }
         
-        # Determine HTTP status code based on overall health
-        overall_status = health_status.get("overall_status", "unknown")
+        # Determine overall status
+        connection_summary = await connection_health_service.get_health_summary()
+        overall_status = connection_summary.get("overall_status", "unknown")
+        health_status["overall_status"] = overall_status
         
         if overall_status == "critical":
             raise HTTPException(status_code=503, detail=health_status)
         elif overall_status == "degraded":
-            # Return 200 but with degraded status for monitoring
             health_status["warning"] = "Some services are degraded"
         
         return health_status
@@ -151,6 +157,24 @@ async def readiness_check() -> Dict[str, Any]:
     except Exception as e:
         logger.error("Readiness check failed", error=str(e))
         raise HTTPException(status_code=503, detail="Readiness check failed")
+
+
+@router.get("/connections")
+async def connection_diagnostics() -> Dict[str, Any]:
+    """Connection diagnostics for API Gateway and service connectivity."""
+    try:
+        health_summary = await connection_health_service.get_health_summary()
+        diagnostics = await connection_health_service.diagnose_connection_issues()
+        
+        return {
+            "connection_summary": health_summary,
+            "diagnostics": diagnostics,
+            "timestamp": None
+        }
+        
+    except Exception as e:
+        logger.error("Connection diagnostics failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Connection diagnostics failed")
 
 
 @router.get("/liveness")

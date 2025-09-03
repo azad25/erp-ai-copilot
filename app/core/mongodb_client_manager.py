@@ -69,3 +69,17 @@ class MongoDBClientManager:
 
 # Global client manager instance
 mongodb_client_manager = MongoDBClientManager()
+
+
+async def get_mongodb_wrapper():
+    """Get MongoDB wrapper instance."""
+    from app.core.mongodb_wrapper import MongoDBWrapper
+    from app.config.settings import get_settings
+    
+    settings = get_settings()
+    client = await mongodb_client_manager.get_client(
+        settings.mongodb.uri,
+        maxPoolSize=settings.mongodb.max_pool_size,
+        minPoolSize=settings.mongodb.min_pool_size
+    )
+    return MongoDBWrapper(client, settings.mongodb.database)

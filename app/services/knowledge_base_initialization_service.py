@@ -710,8 +710,19 @@ The ERP Suite is a comprehensive microservices-based enterprise resource plannin
             try:
                 qdrant_client = await get_qdrant()
                 if qdrant_client is not None:
-                    collection_info = await qdrant_client.get_collection("erp_knowledge")
-                    vector_count = collection_info.vectors_count if collection_info else 0
+                    # Check if collection exists first
+                    try:
+                        collection_info = await qdrant_client.get_collection("erp_knowledge")
+                        vector_count = collection_info.vectors_count if collection_info else 0
+                    except Exception as collection_error:
+                        # Collection doesn't exist, create it
+                        logger.info("Creating missing Qdrant collection 'erp_knowledge'")
+                        from qdrant_client.models import Distance, VectorParams
+                        await qdrant_client.create_collection(
+                            collection_name="erp_knowledge",
+                            vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
+                        )
+                        vector_count = 0
                 else:
                     vector_count = 0
             except Exception as e:

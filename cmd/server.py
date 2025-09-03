@@ -149,7 +149,10 @@ async def main():
                 app=app,
                 host=args.host,
                 port=args.port,
-                log_level="info"
+                log_level="info",
+                ws_ping_interval=20,
+                ws_ping_timeout=20,
+                ws_max_size=16777216
             )
             
             uvicorn_server = uvicorn.Server(config)

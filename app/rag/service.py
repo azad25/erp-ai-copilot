@@ -1,15 +1,14 @@
-"""RAG Service Module
+"""
+RAG (Retrieval-Augmented Generation) service for the AI Copilot.
 
 This module provides the main RAG service that integrates all components
-and provides the core functionality for document ingestion, search, and retrieval.
+and provides the core functionality.
 """
 
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 import asyncio
 from datetime import datetime
-
 import structlog
-from pydantic import BaseModel
 
 from app.config.settings import get_settings
 from app.database.connection import DatabaseManager
@@ -36,7 +35,12 @@ class RAGService:
         """
         self.db_manager = db_manager
         self.mongo = db_manager.get_mongo_client()
-        self.postgres = db_manager.get_postgres_client()
+        # PostgreSQL is optional - only initialize if available
+        try:
+            self.postgres = db_manager.get_postgres_client()
+        except RuntimeError:
+            self.postgres = None
+            logger.warning("PostgreSQL not available, RAG service will use MongoDB only")
         
         # Initialize components
         self.document_processor = DocumentProcessor()

@@ -50,18 +50,19 @@ class ReasoningStep:
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
+        """Convert reasoning step to dictionary"""
         return {
             "step_number": self.step_number,
-            "step_type": self.step_type.value,
+            "step_type": self.step_type.value if isinstance(self.step_type, ReasoningStepType) else str(self.step_type),
             "title": self.title,
             "description": self.description,
+            "content": self.content,
             "source": self.source,
+            "icon": self.icon,
             "status": self.status,
-            "data": self.data,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else str(self.timestamp),
             "processing_time": self.processing_time,
-            "icon": self.icon
+            "metadata": self.metadata
         }
 
 

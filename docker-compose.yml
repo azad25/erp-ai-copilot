@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   # AI Copilot Service - AI-powered ERP assistance with Ollama integration
   ai-copilot:
     build:
-      context: ../erp-ai-copilot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ${AI_COPILOT_DOCKERFILE:-Dockerfile}
     container_name: ${COMPOSE_PROJECT_NAME:-erp-suite}-ai-copilot
     ports:
       - "8003:8003"  # HTTP API
@@ -61,13 +59,12 @@ services:
       - DEFAULT_LLM_PROVIDER=gemini
       - DEFAULT_MODEL=gemini2.0:flash
       - GEMINI_API_KEY=AIzaSyDe79kNlJ_lGUXO5e-qka73mUpcvrynsBc
-      - DEFAULT_MODEL=gemini2.0:flash
       - AI_DEFAULT_MODEL=gemini2.0:flash
       - AI_MAX_TOKENS=4000
       - AI_TEMPERATURE=0.7
 
       # Auth Service Configuration
-      - AUTH_SERVICE_GRPC_HOST=erp-suite-auth-service
+      - AUTH_SERVICE_GRPC_HOST=auth-service
       - AUTH_SERVICE_GRPC_PORT=50051
       
       # API Configuration
@@ -128,9 +125,10 @@ services:
       - MONITORING_LOG_FORMAT=json
       
     volumes:
-      - ../erp-ai-copilot:/app
+      - ./:/app
       - ./logs:/app/logs
       - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       postgres:
         condition: service_started
@@ -155,13 +153,12 @@ services:
       timeout: 100s
       retries: 3
       start_period: 60s
-    command: ["python", "cmd/server.py", "--mode", "full", "--provider", "GeminiProvider", "--host", "0.0.0.0", "--port", "8003"]
+    command: ["python", "cmd/server.py", "--mode", "full", "--provider", "gemini", "--host", "0.0.0.0", "--port", "8003"]
     profiles:
       - ai-services
       - full-stack
-volumes:
-  ollama_data:
 
 networks:
   erp-network:
     external: true
+    name: erp-suite_erp-network

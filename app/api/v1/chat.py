@@ -1,17 +1,17 @@
 """
 Chat API endpoints for the AI Copilot service.
 """
-import uuid
+import asyncio
+import json
 import time
+import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
 import structlog
 
 from app.database.connection import get_db_session
-from app.models.database import Conversation, Message
 from app.models.api import User
 from app.models.api import (
     ChatRequest, ChatResponse, ChatStreamResponse,
@@ -19,7 +19,6 @@ from app.models.api import (
     ConversationListResponse, ConversationResponse, MessageResponse
 )
 from app.services.chat_service import ChatService
-from app.services.conversation_service import conversation_service
 from app.services.auth_service import get_current_user
 from app.core.metrics import CHAT_REQUESTS, CHAT_RESPONSES, CHAT_ERRORS
 
@@ -42,45 +41,12 @@ async def chat(
         model = getattr(request, 'model', 'gemini2.0:flash')
         CHAT_REQUESTS.labels(agent_type=agent_type, model=model).inc()
         
-        # Initialize conversation service
-        await conversation_service.initialize()
+        # Initialize chat service - it handles all conversation management
+        chat_service = ChatService()
         
-        # Get or create conversation using MongoDB
-        conversation_id = request.conversation_id
-        if not conversation_id:
-            # Create new conversation in MongoDB
-            conversation_data = await conversation_service.create_conversation(
-                user_id=str(current_user.id),
-                organization_id=str(current_user.organization_id),
-                title=request.message[:100] + "..." if len(request.message) > 100 else request.message,
-                context=request.context,
-                metadata={"source": "api", "agent_type": request.agent_type}
-            )
-            conversation_id = conversation_data["conversation_id"]
-        else:
-            # Verify conversation belongs to user (allow if not found for new conversations)
-            conversation_data = await conversation_service.get_conversation(conversation_id)
-            if conversation_data and conversation_data["user_id"] != str(current_user.id):
-                raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Save user message in MongoDB
-        user_message_data = await conversation_service.add_message(
-            conversation_id=conversation_id,
-            role="user",
-            content=request.message,
-            user_id=str(current_user.id),
-            metadata={
-                "agent_type": request.agent_type,
-                "model": request.model,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens
-            }
-        )
-        
-        # Get AI response using ChatService
-        chat_service = ChatService(db)
+        # Send message - ChatService handles conversation creation, validation, and AI response
         response = await chat_service.send_message(
-            conversation_id=conversation_id,
+            conversation_id=request.conversation_id,
             user_id=str(current_user.id),
             message=request.message,
             metadata={
@@ -89,10 +55,11 @@ async def chat(
                 "temperature": request.temperature,
                 "max_tokens": request.max_tokens,
                 "context": request.context
-            }
+            },
+            organization_id=str(current_user.organization_id)
         )
         
-        # AI response is already saved by ChatService, just get the response data
+        # Response is already handled by ChatService
         ai_response_data = {
             "content": response.content,
             "agent_type": response.agent_type,
@@ -152,130 +119,42 @@ async def chat_stream(
     try:
         CHAT_REQUESTS.labels(agent_type=request.agent_type, model=request.model).inc()
         
-        # Get or create conversation
-        conversation_id = request.conversation_id
-        if not conversation_id:
-            conversation = Conversation(
-                organization_id=current_user.organization_id,
-                user_id=current_user.id,
-                title=request.message[:100] + "..." if len(request.message) > 100 else request.message,
-                context=request.context,
-                metadata={"source": "api", "agent_type": request.agent_type}
-            )
-            db.add(conversation)
-            await db.commit()
-            await db.refresh(conversation)
-            conversation_id = conversation.id
-        else:
-            conversation = await db.execute(
-                select(Conversation).where(
-                    and_(
-                        Conversation.id == conversation_id,
-                        Conversation.user_id == current_user.id,
-                        Conversation.organization_id == current_user.organization_id
-                    )
-                )
-            )
-            conversation = conversation.scalar_one_or_none()
-            if not conversation:
-                raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Save user message
-        user_message = Message(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            role="user",
-            content=request.message,
-            metadata={
-                "agent_type": request.agent_type,
-                "model": request.model,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens
-            }
-        )
-        db.add(user_message)
-        await db.commit()
-        await db.refresh(user_message)
-        
-        # Generate streaming response
-        chat_service = ChatService(db, current_user)
+        # Initialize chat service - it handles all conversation and streaming logic
+        chat_service = ChatService()
         
         async def generate_stream():
-            message_id = uuid.uuid4()
-            content_buffer = ""
-            chunk_index = 0
-            
             try:
-                async for chunk in chat_service.generate_streaming_response(
-                    conversation_id=conversation_id,
-                    user_message=request.message,
-                    agent_type=request.agent_type,
-                    model=request.model,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    context=request.context
-                ):
-                    content_buffer += chunk
-                    chunk_index += 1
-                    
-                    yield ChatStreamResponse(
-                        message_id=message_id,
-                        conversation_id=conversation_id,
-                        content=chunk,
-                        agent_type=request.agent_type,
-                        chunk_index=chunk_index,
-                        is_complete=False
-                    ).model_dump_json() + "\n"
-                
-                # Save complete AI response
-                ai_message = Message(
-                    conversation_id=conversation_id,
-                    user_id=None,
-                    role="assistant",
-                    content=content_buffer,
+                # Use chat service's streaming method with reasoning steps
+                async for stream_response in chat_service.send_message_stream(
+                    conversation_id=request.conversation_id,
+                    user_id=str(current_user.id),
+                    message=request.message,
                     metadata={
                         "agent_type": request.agent_type,
                         "model": request.model,
-                        "chunks": chunk_index,
-                        "streaming": True
-                    }
-                )
-                db.add(ai_message)
-                await db.commit()
+                        "temperature": request.temperature,
+                        "max_tokens": request.max_tokens,
+                        "context": request.context
+                    },
+                    organization_id=str(current_user.organization_id)
+                ):
+                    # Stream all response types (reasoning_step, chunk, error, start)
+                    yield f"data: {stream_response.model_dump_json()}\n\n"
                 
-                # Send final chunk
-                yield ChatStreamResponse(
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    content="",
-                    agent_type=request.agent_type,
-                    chunk_index=chunk_index,
-                    total_chunks=chunk_index,
-                    is_complete=True
-                ).model_dump_json() + "\n"
+                # Send completion signal
+                yield f"data: {{'type': 'complete'}}\n\n"
                 
             except Exception as e:
                 logger.error("Streaming error", error=str(e))
-                yield ChatStreamResponse(
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    content="Error occurred during streaming",
-                    agent_type=request.agent_type,
-                    chunk_index=chunk_index,
-                    is_complete=True
-                ).model_dump_json() + "\n"
-        
-        # Update conversation title if needed
-        if not conversation.title or conversation.title.startswith("..."):
-            conversation.title = request.message[:100] + "..." if len(request.message) > 100 else request.message
-            await db.commit()
+                yield f"data: {{'type': 'error', 'content': 'Error occurred during streaming', 'message': '{str(e)}'}}\n\n"
         
         return StreamingResponse(
             generate_stream(),
             media_type="application/x-ndjson",
             headers={
-                "X-Conversation-Id": str(conversation_id),
-                "X-Message-Id": str(user_message.id)
+                "X-Conversation-Id": str(request.conversation_id or "new"),
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
             }
         )
         

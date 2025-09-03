@@ -54,68 +54,75 @@ class WebSocketService:
         websocket: WebSocket,
         token: Optional[str] = None
     ) -> Optional[User]:
-        """Authenticate a WebSocket connection using the provided token.
+        """Authenticate WebSocket connection using token"""
+        logger.info(f"WebSocket authentication attempt from {websocket.client.host if websocket.client else 'unknown'}")
         
-        Args:
-            websocket: The WebSocket connection
-            token: Authentication token
-            
-        Returns:
-            User: Authenticated user if successful, None otherwise
-        """
         if not token:
+            logger.error("WebSocket authentication failed: No token provided")
             raise AuthenticationError("Authentication token is required")
         
+        # Log token info (first 20 chars for security)
+        logger.info(f"Authenticating token: {token[:20]}...")
+        
         try:
-            # Get or create token cache service instance
+            # Get token cache service
             token_cache_service = get_token_cache_service()
             if not token_cache_service:
-                # Fallback: get Redis client from FastAPI app state
-                from fastapi import Request
-                import redis.asyncio as redis
-                from app.config.settings import get_settings
-                
-                settings = get_settings()
-                redis_client = redis.Redis(
-                    host=settings.redis.host,
-                    port=settings.redis.port,
-                    password=settings.redis.password,
-                    db=settings.redis.db,
-                    decode_responses=True
-                )
-                token_cache_service = TokenCacheService(redis_client)
+                logger.warning("Token cache service not available, initializing fallback")
+                # Fallback to local redis client and token cache service init
+                from app.database.connection import get_redis_client
+                from app.services.token_cache_service import TokenCacheService
+                redis_client = get_redis_client()
+                if redis_client:
+                    token_cache_service = TokenCacheService(redis_client)
+                    logger.info("Fallback token cache service initialized")
+                else:
+                    logger.error("Redis client not available for token validation")
+                    raise AuthenticationError("Authentication service unavailable")
             
-            # Validate token using cache service
+            logger.info("Validating token with token cache service...")
+            # Validate token and get user info
             user_info = await token_cache_service.validate_and_cache_token(token)
             if not user_info:
+                logger.error("WebSocket authentication failed: Token validation returned None")
                 raise AuthenticationError("Invalid or expired token")
             
-            # Create user object from token claims
+            logger.info(f"Token validation successful, user info keys: {list(user_info.keys())}")
+            
+            # Create user object from token info
+            user_id = user_info.get('user_id') or user_info.get('id') or user_info.get('sub')
+            email = user_info.get('email', '')
+            
+            if not user_id:
+                logger.error(f"WebSocket authentication failed: No user ID in token info: {user_info}")
+                raise AuthenticationError("Invalid token: missing user ID")
+            
+            logger.info(f"Creating user object for ID: {user_id}, email: {email}")
+            
             user = User(
-                id=user_info.get('id'),
-                email=user_info.get('email', ''),
+                id=user_id,
+                email=email,
+                username=email.split('@')[0] if email else user_id,
+                is_active=True,
+                is_verified=True,
                 organization_id=user_info.get('organization_id'),
-                is_active=user_info.get('is_active', False),
-                is_verified=user_info.get('is_verified', False),
-                username=user_info.get('email', '').split('@')[0],
-                full_name=user_info.get('full_name', '')
+                role=user_info.get('role', 'user')
             )
             
-            # Verify user is active and verified
+            # Additional validation
             if not user.is_active or not user.is_verified:
+                logger.error(f"WebSocket authentication failed: User account not active or verified: {user_id}")
                 raise AuthenticationError("User account is not active or not verified")
-                
+            
+            logger.info(f"WebSocket authentication successful for user: {user_id}")
             return user
             
-        except Exception as e:
-            logger.error(
-                "WebSocket authentication failed",
-                error=str(e),
-                token_start=token[:5] + '...' if token else 'None'
-            )
-            if not isinstance(e, WebSocketError):
-                raise AuthenticationError("Authentication failed") from e
+        except AuthenticationError as e:
+            logger.error(f"WebSocket authentication failed: {str(e)}")
             raise
+        except Exception as e:
+            logger.error(f"WebSocket authentication failed with unexpected error: {str(e)}", exc_info=True)
+            raise AuthenticationError("Authentication failed") from e
     
     def get_message_handler(self, message_type: str) -> Optional[Type[BaseMessageHandler]]:
         """Get the appropriate handler for a message type.

@@ -336,6 +336,47 @@ class Settings(BaseSettings):
     
     # LLM settings
     llm: LLMSettings = LLMSettings()
+    
+    # Backward compatibility properties
+    @property
+    def database_url(self) -> str:
+        """Get database URL for backward compatibility."""
+        return self.database.url
+    
+    @property
+    def redis_url(self) -> str:
+        """Get Redis URL for backward compatibility."""
+        return self.redis.url
+    
+    @property
+    def DEBUG(self) -> bool:
+        """Get debug flag for backward compatibility."""
+        return self.service.debug
+    
+    @property
+    def DB_MAX_CONNECTIONS(self) -> int:
+        """Get max database connections for backward compatibility."""
+        return self.database.max_connections
+    
+    @property
+    def REDIS_POOL_SIZE(self) -> int:
+        """Get Redis pool size for backward compatibility."""
+        return self.redis.pool_size
+    
+    @property
+    def QDRANT_API_KEY(self) -> Optional[str]:
+        """Get Qdrant API key for backward compatibility."""
+        return self.qdrant.api_key
+    
+    @property
+    def QDRANT_HOST(self) -> str:
+        """Get Qdrant host for backward compatibility."""
+        return self.qdrant.host
+    
+    @property
+    def QDRANT_PORT(self) -> int:
+        """Get Qdrant port for backward compatibility."""
+        return self.qdrant.port
 
 
 # Global settings instance

@@ -11,11 +11,16 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from redis.asyncio import Redis, ConnectionPool
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
-from elasticsearch import AsyncElasticsearch
+try:
+    from elasticsearch import AsyncElasticsearch
+except ImportError:
+    AsyncElasticsearch = None
 import asyncio
 import structlog
 
-from app.core.config import settings
+from app.config.settings import get_settings
+
+settings = get_settings()
 from app.core.circuit_breaker import (
     circuit_manager, MONGODB_CIRCUIT_CONFIG, REDIS_CIRCUIT_CONFIG, 
     DATABASE_CIRCUIT_CONFIG, CircuitBreakerOpenError
@@ -120,10 +125,10 @@ class DatabaseManager:
         """Initialize PostgreSQL connection with circuit breaker and retry logic."""
         try:
             # Convert PostgreSQL URL to async format
-            async_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
+            async_url = settings.database.url.replace("postgresql://", "postgresql+asyncpg://")
             
             engine_kwargs = {
-                "echo": settings.DEBUG,
+                "echo": settings.service.debug,
                 "pool_pre_ping": True,
                 "pool_recycle": 3600,
                 "connect_args": {
@@ -134,11 +139,11 @@ class DatabaseManager:
                 },
             }
             
-            if settings.DEBUG:
+            if settings.service.debug:
                 engine_kwargs["poolclass"] = NullPool
             else:
-                engine_kwargs["pool_size"] = settings.DB_MAX_CONNECTIONS
-                engine_kwargs["max_overflow"] = settings.DB_MAX_CONNECTIONS * 2
+                engine_kwargs["pool_size"] = settings.database.max_connections
+                engine_kwargs["max_overflow"] = settings.database.max_connections * 2
                 engine_kwargs["pool_timeout"] = 30
             
             self.postgres_engine = create_async_engine(async_url, **engine_kwargs)
@@ -169,9 +174,9 @@ class DatabaseManager:
         try:
             # Create MongoDB client with minimal background operations to prevent sync client timeouts
             self.mongodb_client = AsyncIOMotorClient(
-                settings.MONGODB_URI,
-                maxPoolSize=5,  # Reduced pool size
-                minPoolSize=0,  # No minimum connections
+                settings.mongodb.uri,
+                maxPoolSize=settings.mongodb.max_pool_size,
+                minPoolSize=settings.mongodb.min_pool_size,
                 serverSelectionTimeoutMS=30000,
                 connectTimeoutMS=30000,
                 socketTimeoutMS=30000,
@@ -205,8 +210,8 @@ class DatabaseManager:
         """Initialize Redis connection with circuit breaker and retry logic."""
         try:
             pool = ConnectionPool.from_url(
-                settings.redis_url,
-                max_connections=settings.REDIS_POOL_SIZE,
+                settings.redis.url,
+                max_connections=settings.redis.pool_size,
                 decode_responses=True,
                 retry_on_timeout=True,
                 health_check_interval=30,
@@ -232,12 +237,12 @@ class DatabaseManager:
         """Initialize Qdrant connection."""
         try:
             # Use HTTPS if API key is provided, otherwise HTTP for local development
-            use_https = bool(settings.QDRANT_API_KEY)
+            use_https = bool(settings.qdrant.api_key)
             
             self.qdrant_client = AsyncQdrantClient(
-                host=settings.QDRANT_HOST,
-                port=settings.QDRANT_PORT,
-                api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None,
+                host=settings.qdrant.host,
+                port=settings.qdrant.port,
+                api_key=settings.qdrant.api_key if settings.qdrant.api_key else None,
                 https=use_https,
                 timeout=30.0
             )
@@ -333,7 +338,7 @@ class DatabaseManager:
             except Exception as e:
                 raise DatabaseError("mongodb_reconnect", f"Failed to reconnect to MongoDB: {str(e)}")
         
-        return self.mongodb_client[settings.MONGODB_DATABASE]
+        return self.mongodb_client[settings.mongodb.database]
         
     def get_mongo_client(self) -> 'motor.motor_asyncio.AsyncIOMotorClient':
         """Get MongoDB client."""
@@ -341,14 +346,15 @@ class DatabaseManager:
             raise RuntimeError("MongoDB not initialized")
         return self.mongodb_client
     
-    async def get_redis_client(self) -> Redis:
+    async def get_redis_client(self) -> Optional[Redis]:
         """Get Redis client with circuit breaker protection."""
         if not self.redis_client:
             # Try to reinitialize if not connected
             try:
                 await self._init_redis()
             except Exception as e:
-                raise CacheError("redis_reconnect", f"Failed to reconnect to Redis: {str(e)}")
+                logger.warning(f"Failed to reconnect to Redis: {str(e)}")
+                return None
         
         return self.redis_client
     
@@ -462,9 +468,9 @@ async def get_redis():
     """Dependency to get Redis client with circuit breaker protection."""
     try:
         return await db_manager.get_redis_client()
-    except CircuitBreakerOpenError:
-        logger.warning("Redis circuit breaker is open, service unavailable")
-        raise CacheError("redis", "Service temporarily unavailable")
+    except (CircuitBreakerOpenError, CacheError, Exception) as e:
+        logger.warning(f"Redis unavailable, continuing without cache: {e}")
+        return None
 
 
 async def get_qdrant():

@@ -113,8 +113,8 @@ class AgentOrchestrator:
             "queue_size": 0
         }
         
-        # Start background tasks
-        self._start_background_tasks()
+        # Background tasks will be started when needed
+        self._background_tasks_started = False
 
     def register_agent(self, agent: BaseAgent, capabilities: List[str] = None, 
                       version: str = "1.0.0", metadata: Dict[str, Any] = None) -> str:
@@ -237,11 +237,14 @@ class AgentOrchestrator:
         Execute task using the master agent for complex orchestration
         
         Args:
-            request: Task request
+            request: Agent request to process
             
         Returns:
-            Orchestrated response from master agent
+            Agent response from master agent
         """
+        # Start background tasks if not already started
+        if not self._background_tasks_started:
+            self._start_background_tasks()
         return await self.master_agent.execute(request)
 
     def get_agent_health(self, agent_id: str) -> Dict[str, Any]:
@@ -476,8 +479,14 @@ class AgentOrchestrator:
         """
         Start background maintenance tasks
         """
-        asyncio.create_task(self._health_check_loop())
-        asyncio.create_task(self._metrics_cleanup_loop())
+        if not self._background_tasks_started:
+            try:
+                asyncio.create_task(self._health_check_loop())
+                asyncio.create_task(self._metrics_cleanup_loop())
+                self._background_tasks_started = True
+            except RuntimeError:
+                # No event loop running, tasks will be started later
+                pass
 
     async def _health_check_loop(self):
         """

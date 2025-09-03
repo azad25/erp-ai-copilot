@@ -227,7 +227,19 @@ For complex queries, break down the response into:
             
         except Exception as e:
             self.logger.error("Error processing query request", error=str(e))
-            raise QueryError(f"Failed to process query: {str(e)}")
+            # Return graceful fallback instead of raising error
+            from app.agents.base_agent import AgentResponse
+            return AgentResponse(
+                content="I'm having trouble processing your query right now. Please try rephrasing your request or try again in a moment.",
+                session_id=request.session_id,
+                model_used="fallback",
+                metadata={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "fallback_response": True,
+                    "agent_type": "query"
+                }
+            )
 
     async def _parse_query_intent(self, query: str) -> Dict[str, Any]:
         """

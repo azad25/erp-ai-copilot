@@ -650,6 +650,11 @@ class LLMService:
                 model=request.model,
                 exc_info=True,
             )
+            
+            # Try fallback providers for 503/overload errors
+            if "503" in str(e) or "overloaded" in str(e).lower():
+                return await self._try_fallback_providers(request, failed_provider=provider_name)
+            
             raise AIModelError(provider_name, request.model, str(e)) from e
 
     async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
@@ -665,6 +670,56 @@ class LLMService:
 
         async for chunk in provider.generate_stream(request):
             yield chunk
+
+    async def _try_fallback_providers(self, request: LLMRequest, failed_provider: str) -> LLMResponse:
+        """Try fallback providers when primary provider fails"""
+        fallback_order = {
+            "gemini": ["openai", "anthropic", "ollama"],
+            "openai": ["anthropic", "gemini", "ollama"], 
+            "anthropic": ["openai", "gemini", "ollama"],
+            "ollama": ["openai", "anthropic", "gemini"]
+        }
+        
+        fallback_models = {
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-haiku-20240307",
+            "gemini": "gemini-pro",
+            "ollama": "llama3.2:3b"
+        }
+        
+        fallbacks = fallback_order.get(failed_provider, ["openai", "anthropic", "ollama"])
+        
+        for fallback_provider in fallbacks:
+            if fallback_provider in self.providers:
+                try:
+                    fallback_model = fallback_models.get(fallback_provider, request.model)
+                    fallback_request = LLMRequest(
+                        model=fallback_model,
+                        messages=request.messages,
+                        temperature=request.temperature,
+                        max_tokens=request.max_tokens,
+                        system_prompt=request.system_prompt
+                    )
+                    
+                    self.logger.info(f"Trying fallback provider {fallback_provider} with model {fallback_model}")
+                    return await self.providers[fallback_provider].generate(fallback_request)
+                    
+                except Exception as fallback_error:
+                    self.logger.warning(f"Fallback provider {fallback_provider} also failed: {str(fallback_error)}")
+                    continue
+        
+        # If all fallbacks fail, return a graceful fallback response
+        self.logger.error(f"All LLM providers failed for request, returning fallback response")
+        return LLMResponse(
+            content="I apologize, but I'm experiencing technical difficulties with all AI providers at the moment. Please try again in a few minutes. If the issue persists, please contact support.",
+            model="fallback",
+            tokens_used=0,
+            metadata={
+                "fallback_response": True,
+                "failed_providers": [failed_provider] + fallbacks,
+                "error_type": "all_providers_failed"
+            }
+        )
 
     async def health_check(self) -> Dict[str, bool]:
         """Health check for all providers"""

@@ -7,7 +7,10 @@ including user retrieval from JWT tokens and dependency injection.
 
 from typing import Dict, Any, Optional
 from datetime import datetime
-import jwt
+try:
+    import jwt
+except ImportError:
+    jwt = None
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,15 +175,12 @@ class AuthService:
         """Get current authenticated user"""
         return await get_current_user(credentials, db)
     
-    async def get_current_user_ws(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get_current_user_ws(self, token: str) -> User:
         """Get current user from WebSocket token"""
         return await get_current_user_ws(token)
 
 
-# WebSocket authentication function  
-async def get_current_user_ws(token: str) -> Optional[Dict[str, Any]]:
-    """Get current user from WebSocket token"""
-    return await validate_token_with_cache(token)
+# Remove duplicate function - using the main implementation above
 
 
 # Global auth service instance

@@ -206,19 +206,20 @@ class TokenCacheService:
             if not jwt_service:
                 logger.warning("JWT service not available for fallback, initializing...")
                 from app.services.jwt_service import initialize_jwt_service
-                from app.core.config import settings
-                initialize_jwt_service(settings.JWT_SECRET)
+                from app.config.settings import get_settings
+                settings = get_settings()
+                initialize_jwt_service(settings.security.jwt_secret, settings.security.jwt_algorithm)
                 jwt_service = get_jwt_service()
             
             # Extract user info from JWT token locally
             user_info = jwt_service.extract_user_info(token)
             if not user_info:
-                logger.warning("Local JWT validation failed")
+                logger.warning("Local JWT validation failed - invalid token or wrong secret")
                 return None
             
             # Prepare user info for caching
             cached_user_info = {
-                "id": user_info['id'],
+                "id": user_info.get('id') or user_info.get('user_id'),
                 "email": user_info.get('email', 'unknown@example.com'),
                 "organization_id": user_info.get('organization_id'),
                 "is_active": user_info.get('is_active', True),

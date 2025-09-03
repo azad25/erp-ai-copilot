@@ -14,7 +14,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 # import aiofiles  # Temporarily disabled - missing from Docker container
 import yaml
-import docker
+try:
+    import docker
+except ImportError:
+    docker = None
 from dataclasses import dataclass, field
 
 from app.config.settings import get_settings
@@ -112,21 +115,76 @@ class ServiceDiscoveryService:
     async def _discover_from_docker_api(self):
         """Discover services from Docker API"""
         try:
-            # Connect to Docker daemon
-            client = docker.from_env()
+            # Check if Docker socket is available
+            docker_socket = os.environ.get('DOCKER_HOST', '/var/run/docker.sock')
             
-            # Get running containers
-            containers = client.containers.list(all=True)
+            # Try different Docker connection methods
+            client = None
             
-            for container in containers:
-                # Filter ERP suite containers
-                if any(prefix in container.name for prefix in ['erp-suite-', 'erp_suite_']):
-                    await self._register_service_from_container(container)
+            # Method 1: Try direct socket connection first (most reliable in containers)
+            try:
+                if os.path.exists('/var/run/docker.sock'):
+                    client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                    client.ping()  # Test connection
+                    logger.info("Successfully connected to Docker via socket")
+                else:
+                    raise Exception("Docker socket not found")
+            except Exception as socket_error:
+                logger.debug(f"Docker socket connection failed: {socket_error}")
+                client = None
+                
+                # Method 2: Try from environment (fallback)
+                try:
+                    client = docker.from_env()
+                    # Test the connection
+                    client.ping()
+                    logger.info("Successfully connected to Docker via environment")
+                except Exception as env_error:
+                    logger.debug(f"Docker from_env failed: {env_error}")
+                    client = None
                     
-            client.close()
+                    # Method 3: Try TCP connection (for Docker-in-Docker scenarios)
+                    try:
+                        client = docker.DockerClient(base_url='tcp://localhost:2376')
+                        client.ping()  # Test connection
+                        logger.info("Successfully connected to Docker via TCP")
+                    except Exception as tcp_error:
+                        logger.debug(f"Docker TCP connection failed: {tcp_error}")
+                        client = None
+                
+                # Method 4: Skip Docker API discovery if not available
+                if client is None:
+                    logger.debug("Docker API not available, using static service configuration")
+                    await self._register_static_services()
+                    return
+            
+            if client:
+                try:
+                    # Get running containers
+                    containers = client.containers.list(all=True)
+                    
+                    discovered_count = 0
+                    for container in containers:
+                        # Filter ERP suite containers
+                        if any(prefix in container.name for prefix in ['erp-suite-', 'erp_suite_']):
+                            await self._register_service_from_container(container)
+                            discovered_count += 1
+                    
+                    logger.info(f"Successfully discovered {discovered_count} services from Docker API")
+                    
+                except Exception as container_error:
+                    logger.error(f"Failed to list containers: {container_error}")
+                    await self._register_static_services()
+                finally:
+                    try:
+                        client.close()
+                    except:
+                        pass
             
         except Exception as e:
             logger.error(f"Failed to discover services from Docker API: {e}")
+            # Continue without Docker API discovery - use static configuration instead
+            await self._register_static_services()
     
     async def _register_service_from_container(self, container):
         """Register service from Docker container"""
@@ -134,17 +192,26 @@ class ServiceDiscoveryService:
             # Extract service info from container
             name = container.name.replace('erp-suite-', '').replace('erp_suite_', '')
             
-            # Get container ports
-            ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
-            endpoint = "http://localhost"
+            # Get container network info
+            network_settings = container.attrs.get('NetworkSettings', {})
+            ports = network_settings.get('Ports', {})
+            networks = network_settings.get('Networks', {})
             
-            # Find the first exposed port
+            # Use internal Docker network hostname instead of localhost
+            endpoint = f"http://{name}"
+            
+            # Find the internal port from the container
             for port_spec, port_bindings in ports.items():
-                if port_bindings:
-                    host_port = port_bindings[0].get('HostPort')
-                    if host_port:
-                        endpoint = f"http://localhost:{host_port}"
-                        break
+                if '/' in port_spec:
+                    internal_port = port_spec.split('/')[0]
+                    endpoint = f"http://{name}:{internal_port}"
+                    break
+            
+            # If we're in the same Docker network, use container name
+            if 'erp-network' in networks:
+                # Use the container name for internal network communication
+                container_name = container.name.replace('erp-suite-', '')
+                endpoint = f"http://{container_name}:8000" if 'api-gateway' in container_name else endpoint
             
             # Get environment variables
             env_vars = container.attrs.get('Config', {}).get('Env', [])
@@ -169,6 +236,75 @@ class ServiceDiscoveryService:
             
         except Exception as e:
             logger.error(f"Failed to register service from container {container.name}: {e}")
+    
+    async def _register_static_services(self):
+        """Register static services when Docker API is not available"""
+        try:
+            # Static service definitions for Docker environment
+            static_services = {
+                "api-gateway": {
+                    "name": "api-gateway",
+                    "type": "gateway",
+                    "version": "1.0.0",
+                    "status": "running",
+                    "endpoint": "http://api-gateway:8000",
+                    "health_check_url": "http://api-gateway:8000/health",
+                    "capabilities": ["API Gateway", "Service Routing", "Load Balancing"]
+                },
+                "auth-service": {
+                    "name": "auth-service",
+                    "type": "microservice",
+                    "version": "1.0.0",
+                    "status": "running",
+                    "endpoint": "http://auth-service:8080",
+                    "health_check_url": "http://auth-service:8080/health",
+                    "capabilities": ["User Management", "JWT", "RBAC", "Authentication"]
+                },
+                "mongodb": {
+                    "name": "mongodb",
+                    "type": "database",
+                    "version": "6.0",
+                    "status": "running",
+                    "endpoint": "mongodb://mongodb:27017",
+                    "health_check_url": "mongodb://mongodb:27017",
+                    "capabilities": ["Document Database", "Analytics", "Conversations"]
+                },
+                "redis": {
+                    "name": "redis",
+                    "type": "cache",
+                    "version": "7.0",
+                    "status": "running",
+                    "endpoint": "redis://redis:6379",
+                    "health_check_url": "redis://redis:6379",
+                    "capabilities": ["Caching", "Sessions", "Queues"]
+                },
+                "qdrant": {
+                    "name": "qdrant",
+                    "type": "vector-db",
+                    "version": "1.7.4",
+                    "status": "running",
+                    "endpoint": "http://qdrant:6333",
+                    "health_check_url": "http://qdrant:6333/health",
+                    "capabilities": ["Vector Search", "Embeddings", "RAG"]
+                }
+            }
+            
+            for service_name, service_data in static_services.items():
+                service = ServiceInfo(
+                    name=service_data["name"],
+                    type=service_data["type"],
+                    version=service_data["version"],
+                    status=service_data["status"],
+                    endpoint=service_data["endpoint"],
+                    health_check_url=service_data["health_check_url"],
+                    capabilities=service_data["capabilities"]
+                )
+                self.services[service_name] = service
+            
+            logger.info(f"Registered {len(static_services)} static services")
+            
+        except Exception as e:
+            logger.error(f"Failed to register static services: {e}")
     
     def _extract_capabilities_from_name(self, name: str) -> List[str]:
         """Extract capabilities from service name"""

@@ -3,7 +3,7 @@ Main FastAPI application for the AI Copilot service.
 """
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -394,9 +394,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
-# Temporarily disable all middleware to test WebSocket connections
+# Disable problematic middleware that might block WebSocket connections
 # app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 # app.add_middleware(LoggingMiddleware)
 # app.add_middleware(RateLimitMiddleware)
@@ -408,6 +409,56 @@ app.include_router(background_jobs_router, prefix="/api/v1/background-jobs", tag
 app.include_router(knowledge_base_router, prefix="/api/v1/knowledge-base", tags=["knowledge-base"])
 app.include_router(websocket_router, prefix="/api/v1/ws", tags=["websocket"])
 app.include_router(websocket.router, prefix="/api/v1/websocket", tags=["websocket-reasoning"])
+# Add WebSocket endpoint at root level for API Gateway compatibility
+app.include_router(websocket_router, prefix="", tags=["websocket-root"])
+
+# Add a simple test WebSocket endpoint directly to the main app
+@app.websocket("/ws-test")
+async def websocket_test_direct(websocket: WebSocket):
+    """Direct WebSocket test endpoint on main app."""
+    await websocket.accept()
+    await websocket.send_json({"type": "connection", "message": "Direct connection successful"})
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await websocket.send_json({"type": "echo", "message": f"Echo: {data}"})
+    except:
+        pass
+
+# Add the main chat WebSocket endpoint directly to the app
+@app.websocket("/chat")
+async def websocket_chat_direct(websocket: WebSocket):
+    """Direct WebSocket chat endpoint on main app."""
+    from app.api.websocket.service import WebSocketService
+    
+    try:
+        # Accept the connection first
+        await websocket.accept()
+        
+        # Extract token from query parameters
+        token = websocket.query_params.get("token")
+        
+        if not token:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Authentication token is required"
+            })
+            await websocket.close(code=1008, reason="Authentication required")
+            return
+        
+        # Use the WebSocket service to handle the connection
+        websocket_service = WebSocketService()
+        await websocket_service.handle_authenticated_connection(websocket, token)
+        
+    except Exception as e:
+        try:
+            await websocket.send_json({
+                "type": "error", 
+                "message": f"Connection failed: {str(e)}"
+            })
+            await websocket.close(code=1011, reason="Internal error")
+        except:
+            pass
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
 app.include_router(system_commands.router, prefix="/api/v1/system-commands", tags=["system-commands"])
 app.include_router(third_party_apis.router, prefix="/api/v1/third-party-apis", tags=["third-party-apis"])

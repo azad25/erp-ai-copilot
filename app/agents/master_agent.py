@@ -338,39 +338,41 @@ class MasterAgent(BaseAgent):
             self.performance_metrics["agent_usage_stats"][agent_type] += 1
     
     async def _handle_execution_error(self, request: AgentRequest, error: Exception) -> AgentResponse:
-        """Handle execution errors gracefully."""
-        error_message = f"""
-        **System Error**
-        
-        **Error Type**: {type(error).__name__}
-        **Error Message**: {str(error)}
-        
-        **What to do next**:
-        1. **Try Again**: The error might be temporary
-        2. **Simplify Request**: Try a simpler version of your request
-        3. **Check Documentation**: Refer to our help resources
-        4. **Contact Support**: If the issue persists
-        
-        **Example Alternative**:
-        Instead of: "{request.message}"
-        Try: "Show me basic sales data"
-        
-        **Support Resources**:
-        - **Help Center**: help.unibase.com
-        - **Community Forum**: community.unibase.com
-        - **Email Support**: support@unibase.com
         """
+        Handle execution errors with helpful recovery suggestions.
+        
+        Args:
+            request: Original agent request
+            error: Exception that occurred
+            
+        Returns:
+            AgentResponse with error handling and recovery suggestions
+        """
+        self.logger.error(
+            "Master agent execution error",
+            error=str(error),
+            request_id=request.session_id,
+            exc_info=True
+        )
+        
+        # Check if this is an AI provider failure
+        if "AI model" in str(error) and ("503" in str(error) or "401" in str(error) or "overloaded" in str(error)):
+            error_message = "I'm experiencing temporary issues with AI services. Please try your request again in a moment."
+        else:
+            error_message = f"I encountered an issue processing your request. Please try rephrasing or contact support if this persists."
         
         return AgentResponse(
-            response=error_message,
-            agent_type=AgentType.HELP,
-            conversation_id=request.conversation_id or "",
-            execution_id="",
+            content=error_message,
+            session_id=request.session_id,
+            model_used="fallback",
             metadata={
                 "error_type": type(error).__name__,
                 "error_message": str(error),
                 "recovery_suggested": True,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
+                "agent_type": "HELP",
+                "conversation_id": request.conversation_id or "",
+                "execution_id": ""
             }
         )
     

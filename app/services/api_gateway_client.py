@@ -12,7 +12,10 @@ import logging
 from datetime import datetime, timedelta
 import aiohttp
 from urllib.parse import urljoin
-import jwt
+try:
+    import jwt
+except ImportError:
+    jwt = None
 from dataclasses import dataclass
 
 from app.config.settings import get_settings
@@ -56,11 +59,28 @@ class APIGatewayClient:
         self._initialize_service_registry()
     
     async def _ensure_session(self):
-        """Ensure HTTP session is initialized"""
+        """Ensure HTTP session is initialized with connection resilience"""
         if self.session is None or self.session.closed:
+            # Add DNS resolution and connection timeout settings
+            connector = aiohttp.TCPConnector(
+                limit=100,
+                limit_per_host=30,
+                ttl_dns_cache=300,  # Cache DNS for 5 minutes
+                use_dns_cache=True,
+                keepalive_timeout=60,
+                enable_cleanup_closed=True
+            )
+            
+            timeout = aiohttp.ClientTimeout(
+                total=60,  # Increased total timeout
+                connect=15,  # Increased connection timeout
+                sock_read=30,  # Increased socket read timeout
+                sock_connect=10  # Socket connection timeout
+            )
+            
             self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30),
-                connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
+                timeout=timeout,
+                connector=connector
             )
         
     def _initialize_service_registry(self):
@@ -119,76 +139,154 @@ class APIGatewayClient:
     
     async def initialize(self):
         """Initialize HTTP session and authenticate"""
-        if not self.session:
-            timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(
-                timeout=timeout,
-                headers={"Content-Type": "application/json"}
-            )
+        await self._ensure_session()
+        
+        # Test connectivity first
+        if await self._test_connectivity():
+            await self._authenticate()
+            await self._discover_services()
+        else:
+            logger.error("API Gateway is not reachable, skipping initialization")
+    
+    async def _test_connectivity(self) -> bool:
+        """Test basic connectivity to API Gateway"""
+        try:
+            # Try to reach the health endpoint without authentication
+            health_url = f"{self.base_url}/health"
             
-        await self._authenticate()
-        await self._discover_services()
+            # Use shorter timeout for connectivity test
+            test_timeout = aiohttp.ClientTimeout(total=10, connect=5)
+            
+            async with self.session.get(health_url, timeout=test_timeout) as response:
+                if response.status in [200, 401, 403]:  # Any response means it's reachable
+                    logger.info("API Gateway is reachable")
+                    return True
+                else:
+                    logger.warning(f"API Gateway health check returned: {response.status}")
+                    return False
+                    
+        except aiohttp.ClientConnectorError as e:
+            logger.error(f"Cannot reach API Gateway at {self.base_url}: {e}")
+            return False
+        except asyncio.TimeoutError as e:
+            logger.error(f"API Gateway connectivity test timed out: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Connectivity test failed: {e}")
+            return False
     
     async def _authenticate(self):
-        """Authenticate with the API Gateway"""
-        try:
-            # Use root admin credentials for AI Copilot internal authentication
-            settings = get_settings()
-            auth_data = {
-                "email": settings.api_gateway.admin_email,
-                "password": settings.api_gateway.admin_password
-            }
-            
-            auth_url = f"{self.base_url}/auth/login"
-            
-            async with self.session.post(auth_url, json=auth_data) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    self.auth_token = data.get("access_token")
-                    
-                    # Decode token to get expiration
-                    if self.auth_token:
-                        try:
-                            decoded = jwt.decode(
-                                self.auth_token, 
-                                options={"verify_signature": False}
-                            )
-                            self.token_expires_at = datetime.fromtimestamp(decoded.get("exp", 0))
-                        except Exception:
-                            # Set default expiration
-                            self.token_expires_at = datetime.utcnow() + timedelta(hours=1)
-                    
-                    logger.info("Successfully authenticated with API Gateway")
+        """Authenticate with API Gateway with retry logic"""
+        await self._ensure_session()
+        
+        settings = get_settings()
+        max_retries = settings.api_gateway.max_retries
+        
+        for attempt in range(max_retries + 1):
+            try:
+                auth_data = {
+                    "email": settings.api_gateway.admin_email,
+                    "password": settings.api_gateway.admin_password
+                }
+                
+                auth_url = f"{self.base_url}/auth/login"
+                
+                # Use longer timeout for authentication
+                auth_timeout = aiohttp.ClientTimeout(total=45, connect=15, sock_read=30)
+                
+                async with self.session.post(auth_url, json=auth_data, timeout=auth_timeout) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        self.auth_token = data.get("access_token")
+                        
+                        # Extract token expiration
+                        if self.auth_token:
+                            try:
+                                decoded = jwt.decode(
+                                    self.auth_token, 
+                                    options={"verify_signature": False}
+                                )
+                                self.token_expires_at = datetime.fromtimestamp(decoded.get("exp", 0))
+                            except Exception:
+                                # Set default expiration
+                                self.token_expires_at = datetime.utcnow() + timedelta(hours=1)
+                        
+                        logger.info("Successfully authenticated with API Gateway")
+                        return
+                    elif response.status == 404:
+                        logger.debug(f"Authentication endpoint not found: {auth_url}")
+                        return  # Skip authentication if endpoint doesn't exist
+                    else:
+                        logger.error(f"Authentication failed: {response.status}")
+                        if attempt < max_retries:
+                            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        
+            except aiohttp.ClientConnectorError as e:
+                logger.error(f"Connection error to API Gateway (attempt {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)
                 else:
-                    logger.error(f"Authentication failed: {response.status}")
-                    
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+                    logger.error("Failed to connect to API Gateway after all retries")
+                    raise
+            except asyncio.TimeoutError as e:
+                logger.error(f"Authentication timeout (attempt {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    logger.error("Authentication timed out after all retries")
+                    raise
+            except Exception as e:
+                logger.error(f"Authentication error (attempt {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise
     
     async def _discover_services(self):
         """Discover available services from API Gateway"""
         try:
-            discovery_url = f"{self.base_url}/discovery/services"
+            # Try multiple discovery endpoints
+            discovery_endpoints = [
+                f"{self.base_url}/api/v1/services",
+                f"{self.base_url}/services", 
+                f"{self.base_url}/discovery/services"
+            ]
+            
             headers = await self._get_auth_headers()
             
-            async with self.session.get(discovery_url, headers=headers) as response:
-                if response.status == 200:
-                    services = await response.json()
-                    
-                    for service in services.get("services", []):
-                        service_name = service.get("name", "").replace("-service", "")
-                        if service_name and service_name not in self.service_registry:
-                            self.service_registry[service_name] = ServiceEndpoint(
-                                name=service.get("name"),
-                                base_url=service.get("url"),
-                                version=service.get("version", "v1"),
-                                health_endpoint=service.get("health_endpoint", "/health")
-                            )
-                    
-                    logger.info(f"Discovered {len(services.get('services', []))} services")
+            for discovery_url in discovery_endpoints:
+                try:
+                    async with self.session.get(discovery_url, headers=headers) as response:
+                        if response.status == 200:
+                            services = await response.json()
+                            
+                            for service in services.get("services", []):
+                                service_name = service.get("name", "").replace("-service", "")
+                                if service_name and service_name not in self.service_registry:
+                                    self.service_registry[service_name] = ServiceEndpoint(
+                                        name=service.get("name"),
+                                        base_url=service.get("url"),
+                                        version=service.get("version", "v1"),
+                                        health_endpoint=service.get("health_endpoint", "/health")
+                                    )
+                            
+                            logger.info(f"Discovered {len(services.get('services', []))} services from {discovery_url}")
+                            return  # Success, exit early
+                        elif response.status == 404:
+                            logger.debug(f"Service discovery endpoint not found: {discovery_url}")
+                            continue  # Try next endpoint
+                        else:
+                            logger.debug(f"Service discovery returned {response.status} from {discovery_url}")
+                            continue
+                except Exception as endpoint_error:
+                    logger.debug(f"Failed to query {discovery_url}: {endpoint_error}")
+                    continue
+            
+            # If all endpoints failed, log as debug instead of warning
+            logger.debug("No service discovery endpoints available, using static configuration")
                     
         except Exception as e:
-            logger.warning(f"Service discovery failed: {e}")
+            logger.debug(f"Service discovery failed: {e}")
     
     async def _get_auth_headers(self) -> Dict[str, str]:
         """Get authentication headers"""

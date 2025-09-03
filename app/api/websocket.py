@@ -18,7 +18,9 @@ from sqlalchemy.orm import selectinload
 from app.services.auth_service import get_current_user_ws
 from app.services.chat_service import ChatService
 from app.database.connection import get_db_session
-from app.database.models.database import Conversation, Message, User, ConversationTable, MessageTable
+from app.database.models.database import User
+from app.models.mongodb_models import ConversationMongo, MessageMongo
+from app.core.mongodb_client_manager import get_mongodb_wrapper
 from app.models.api import WebSocketMessage, WebSocketChatMessage, WebSocketChatResponse, WebSocketStatusMessage
 from app.core.metrics import WS_CONNECTIONS, WS_MESSAGES, WS_ERRORS
 from app.config.settings import settings
@@ -558,19 +560,19 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
         
         # Get or create conversation
         try:
+            mongodb_wrapper = await get_mongodb_wrapper()
+            
             if conversation_id:
-                # Verify conversation belongs to user
-                result = await db.execute(
-                    select(ConversationTable).where(
-                        and_(
-                            ConversationTable.id == conversation_id,
-                            ConversationTable.user_id == user.id,
-                            ConversationTable.organization_id == user.organization_id
-                        )
-                    )
+                # Verify conversation belongs to user using MongoDB
+                conversation_data = await mongodb_wrapper.find_one(
+                    "conversations",
+                    {
+                        "conversation_id": str(conversation_id),
+                        "user_id": str(user.id),
+                        "organization_id": str(user.organization_id)
+                    }
                 )
-                conversation = result.scalar_one_or_none()
-                if not conversation:
+                if not conversation_data:
                     error_message = WebSocketStatusMessage(
                         type="error",
                         status="error",
@@ -578,19 +580,23 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
                     )
                     await manager.send_personal_json(error_message.model_dump(), connection_id)
                     return False
+                conversation = ConversationMongo(**conversation_data)
             else:
-                # Create new conversation
-                conversation_id = uuid.uuid4()
-                conversation = ConversationTable(
-                    id=conversation_id,
-                    organization_id=user.organization_id,
-                    user_id=user.id,
-                    title=message_content[:100] + "..." if len(message_content) > 100 else message_content,
-                    context={},
-                    meta_data={"source": "websocket"}
-                )
-                db.add(conversation)
-                await db.flush()  # Get the ID without committing
+                # Create new conversation in MongoDB
+                conversation_id = str(uuid.uuid4())
+                conversation_data = {
+                    "conversation_id": conversation_id,
+                    "organization_id": str(user.organization_id),
+                    "user_id": str(user.id),
+                    "title": message_content[:100] + "..." if len(message_content) > 100 else message_content,
+                    "context": {},
+                    "metadata_json": {},
+                    "status": "active",
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                await mongodb_wrapper.insert_one("conversations", conversation_data)
+                conversation = ConversationMongo(**conversation_data)
                 
                 logger.info("Created new conversation",
                           connection_id=connection_id,
@@ -618,7 +624,7 @@ async def handle_chat_message(connection_id: str, user: User, message_data: dict
                       conversation_id=conversation_id)
             
             # Initialize ChatService with database session
-            chat_service = ChatService(db)
+            chat_service = ChatService()
             logger.info("ChatService created, processing message", 
                       connection_id=connection_id,
                       message_length=len(message_content))

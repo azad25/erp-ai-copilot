@@ -10,7 +10,7 @@ import structlog
 
 from app.database.connection import get_db_session
 from app.services.auth_service import get_current_user
-from app.services.enhanced_chat_service import enhanced_chat_service
+from app.services.chat_service import chat_service
 from app.models.api import User
 from app.models.chat import ReasoningRequest, ReasoningResponse, ReasoningStep
 from app.core.metrics import CHAT_REQUESTS, CHAT_RESPONSES, CHAT_ERRORS
@@ -34,11 +34,11 @@ async def reasoning(
         model = getattr(request, 'model', 'gemini2.0:flash')
         CHAT_REQUESTS.labels(agent_type=agent_type, model=model).inc()
         
-        # Initialize enhanced chat service
-        await enhanced_chat_service.initialize()
+        # Initialize chat service
+        # No initialization needed for chat_service
         
         # Process message with reasoning
-        reasoning_steps = await enhanced_chat_service.process_message_with_reasoning(
+        reasoning_steps = await chat_service.process_message_with_reasoning(
             conversation_id=request.conversation_id,
             message=request.message,
             user_id=str(current_user.id),

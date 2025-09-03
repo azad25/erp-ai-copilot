@@ -2,7 +2,10 @@
 Authentication middleware for WebSocket and HTTP requests
 """
 
-import jwt
+try:
+    import jwt
+except ImportError:
+    jwt = None
 import json
 import logging
 from typing import Optional, Dict, Any
@@ -41,6 +44,10 @@ async def verify_websocket_token(token: str) -> Optional[Dict[str, Any]]:
                 return payload
         
         # Fallback to direct JWT verification
+        if jwt is None:
+            logger.warning("JWT library not available")
+            return None
+            
         from app.config.settings import settings
         payload = jwt.decode(
             token,
@@ -101,6 +108,10 @@ async def get_current_user_websocket(websocket: WebSocket, token: str = None) ->
         logger.info(f"Extracted token for WebSocket auth: {token[:20]}...")
         
         # Direct JWT verification to avoid token cache service issues
+        if jwt is None:
+            logger.warning("JWT library not available for WebSocket auth")
+            return None
+            
         from app.config.settings import settings
         payload = jwt.decode(
             token,
