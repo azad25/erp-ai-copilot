@@ -191,7 +191,7 @@ class WebSocketSettings(BaseSettings):
     
     max_connections: int = Field(default=1000, env="WS_MAX_CONNECTIONS")
     heartbeat_interval: int = Field(default=30, env="WS_HEARTBEAT_INTERVAL")
-    connection_timeout: int = Field(default=300, env="WS_CONNECTION_TIMEOUT")
+    connection_timeout: int = Field(default=60, env="WS_CONNECTION_TIMEOUT")
     max_message_size: int = Field(default=1048576, env="WS_MAX_MESSAGE_SIZE")  # 1MB
     
     class Config:

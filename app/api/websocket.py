@@ -282,7 +282,7 @@ async def websocket_chat(
                 try:
                     # Receive message with timeout to prevent hanging
                     try:
-                        data = await asyncio.wait_for(websocket.receive_text(), timeout=300)  # 5 minute timeout
+                        data = await asyncio.wait_for(websocket.receive_text(), timeout=60)  # 1 minute timeout
                         
                         try:
                             message_data = json.loads(data)
@@ -352,8 +352,17 @@ async def websocket_chat(
                         logger.info("WebSocket connection timed out", 
                                   connection_id=connection_id,
                                   user_id=user.id)
-                        await websocket.close(code=1001, reason="Connection timeout")
-                        break
+                        # Send ping to check if connection is still alive
+                        try:
+                            await websocket.send_text(json.dumps({
+                                "type": "ping",
+                                "message": "Connection check"
+                            }))
+                            logger.info("Sent ping to check connection health")
+                        except Exception as ping_error:
+                            logger.warning("Failed to send ping, closing connection", error=str(ping_error))
+                            await websocket.close(code=1001, reason="Connection timeout")
+                            break
                     if message_type == "chat_message":
                         # Get database session
                         db = get_db_session()

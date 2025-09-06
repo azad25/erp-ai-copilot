@@ -920,7 +920,7 @@ class ChatService:
             context["organization_id"] = organization_id
             
             # Cache for 10 minutes
-            await redis.setex(cache_key, 600, json.dumps(context, default=str))
+            await redis.set(cache_key, json.dumps(context, default=str), ex=600)
             
             return context
             

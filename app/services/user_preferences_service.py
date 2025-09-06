@@ -141,7 +141,7 @@ class UserPreferencesService:
         if pref_doc:
             value = pref_doc["value"]
             # Cache the result
-            await redis.setex(cache_key, self.cache_ttl, json.dumps(value))
+            await redis.set(cache_key, json.dumps(value), ex=self.cache_ttl)
             return value
         
         # Return default if not found
@@ -201,7 +201,7 @@ class UserPreferencesService:
             
             # Update cache
             cache_key = f"user_pref:{user_id}:{organization_id}:{category_str}:{key}"
-            await redis.setex(cache_key, self.cache_ttl, json.dumps(value))
+            await redis.set(cache_key, json.dumps(value), ex=self.cache_ttl)
             
             # Invalidate user preferences cache
             user_cache_key = f"user_prefs:{user_id}:{organization_id}"
@@ -265,7 +265,7 @@ class UserPreferencesService:
                         preferences[cat][key] = default_config["value"]
         
         # Cache result
-        await redis.setex(cache_key, self.cache_ttl, json.dumps(preferences))
+        await redis.set(cache_key, json.dumps(preferences), ex=self.cache_ttl)
         
         return preferences
     

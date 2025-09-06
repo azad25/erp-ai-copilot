@@ -623,14 +623,14 @@ class ReasoningEngine:
         """Store reasoning session metadata"""
         try:
             if self.redis_client:
-                await self.redis_client.setex(
+                await self.redis_client.set(
                     f"reasoning_session:{session_id}",
-                    3600,  # 1 hour TTL
                     json.dumps({
                         "user_id": user_id,
                         "timestamp": datetime.utcnow().isoformat(),
                         **metadata
-                    })
+                    }),
+                    expire=3600  # 1 hour TTL
                 )
         except Exception as e:
             logging.error(f"Error storing reasoning session: {e}")

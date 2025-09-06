@@ -95,10 +95,10 @@ class TokenCacheService:
             cached_data = json.dumps(user_info)
             
             # Set with TTL
-            await self.redis_client.setex(
+            await self.redis_client.set(
                 cache_key,
-                int(self.cache_ttl.total_seconds()),
-                cached_data
+                cached_data,
+                expire=int(self.cache_ttl.total_seconds())
             )
             
             logger.info("Token cached successfully", 

@@ -13,7 +13,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class WebSocketTester:
-    def __init__(self, base_url="http://localhost:8000"):
+    def __init__(self, base_url="http://localhost"):
         self.base_url = base_url.rstrip('/')
         self.ws_url = self.base_url.replace('http', 'ws')  # Convert to WebSocket URL
         self.token = None
@@ -39,7 +39,7 @@ class WebSocketTester:
             logger.error("No authentication token available")
             return False
             
-        ws_url = f"{self.ws_url}/chat?token={self.token}"
+        ws_url = f"{self.ws_url}/ws/chat?token={self.token}"
         logger.info(f"Connecting to WebSocket: {ws_url}")
         
         try:
@@ -53,8 +53,16 @@ class WebSocketTester:
                     
                     # Send test message
                     test_message = {
-                        "type": "chat",
-                        "message": "Hello, can you hear me?",
+                        "type": "ai_chat",
+                        "data": {
+                            "message": "Hello, can you hear me?",
+                            "context": {
+                                "application": "erp-suite",
+                                "version": "1.0.0",
+                                "environment": "development"
+                            },
+                            "session_id": "test-session-123"
+                        },
                         "timestamp": str(asyncio.get_event_loop().time())
                     }
                     await websocket.send(json.dumps(test_message))
@@ -75,7 +83,7 @@ class WebSocketTester:
             return False
 
 async def main():
-    tester = WebSocketTester("http://localhost:8000")  # Update port if needed
+    tester = WebSocketTester("http://localhost")  # Test through nginx proxy
     
     # Get auth token
     if not await tester.get_auth_token():

@@ -94,7 +94,7 @@ class CacheManager:
                 serialized = str(value)
             
             # Set with TTL
-            await self._redis.setex(key, ttl, serialized)
+            await self._redis.set(key, serialized, ex=ttl)
             return True
             
         except Exception as e:
