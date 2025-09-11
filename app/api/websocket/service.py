@@ -4,11 +4,21 @@ WebSocket service for handling WebSocket connections and message routing.
 import json
 import logging
 import asyncio
+import uuid
 from typing import Dict, Type, Optional, Any
+from datetime import datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+
+def json_encoder(obj):
+    """Custom JSON encoder for WebSocket messages."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 from app.database.models.database import User
 from app.database.connection import get_db_session
@@ -211,10 +221,11 @@ class WebSocketService:
             logger.info(f"Authentication result: {'success' if user else 'failed'}")
             
             if not user:
-                await websocket.send_json({
+                error_data = {
                     "type": "error", 
                     "message": "Authentication failed"
-                })
+                }
+                await websocket.send_text(json.dumps(error_data, default=json_encoder))
                 await websocket.close(code=1008, reason="Authentication failed")
                 return
             
@@ -286,7 +297,8 @@ class WebSocketService:
             except asyncio.TimeoutError:
                 # Send ping to check if connection is still alive
                 try:
-                    await websocket.send_json({"type": "ping", "timestamp": asyncio.get_event_loop().time()})
+                    ping_data = {"type": "ping", "timestamp": asyncio.get_event_loop().time()}
+                    await websocket.send_text(json.dumps(ping_data, default=json_encoder))
                     # Wait for pong with a short timeout
                     await asyncio.wait_for(websocket.receive_text(), timeout=5)
                 except (asyncio.TimeoutError, WebSocketDisconnect):
@@ -329,6 +341,6 @@ class WebSocketService:
                 "message": message,
                 "status_code": status_code
             }
-            await websocket.send_json(error_msg)
+            await websocket.send_text(json.dumps(error_msg, default=json_encoder))
         except Exception as e:
             logger.error("Failed to send error message", error=str(e))

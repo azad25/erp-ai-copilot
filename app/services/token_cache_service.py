@@ -98,7 +98,7 @@ class TokenCacheService:
             await self.redis_client.set(
                 cache_key,
                 cached_data,
-                expire=int(self.cache_ttl.total_seconds())
+                ex=int(self.cache_ttl.total_seconds())
             )
             
             logger.info("Token cached successfully", 

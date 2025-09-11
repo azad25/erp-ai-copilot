@@ -26,6 +26,8 @@ from app.services.service_discovery_service import service_discovery
 from app.services.user_preferences_service import user_preferences_service
 from app.services.third_party_api_service import third_party_api_service
 from app.services.system_command_service import system_command_service
+from app.services.llm_service import initialize_llm_service
+from app.services.startup_service import startup_service
 from app.api.v1.router import api_router
 from app.api.routes import conversations, background_jobs, websocket, memory, system_commands, third_party_apis
 try:
@@ -83,6 +85,23 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AI Copilot service", version=settings.service.version, environment=settings.service.environment)
     
     try:
+        # Initialize LLM service first (critical for AI functionality)
+        try:
+            llm_service = initialize_llm_service(provider="gemini")  # Default to Gemini
+            logger.info("LLM service initialized successfully")
+            app.state.llm_service = llm_service
+        except Exception as e:
+            logger.error("LLM service initialization failed", error=str(e))
+            # Continue startup but log the issue
+        
+        # Initialize startup service for comprehensive initialization
+        try:
+            initialization_result = await startup_service.initialize_all_services()
+            logger.info("Startup service initialization completed", result=initialization_result)
+            app.state.initialization_result = initialization_result
+        except Exception as e:
+            logger.error("Startup service initialization failed", error=str(e))
+        
         # Initialize database connections with graceful error handling
         try:
             await init_database()
@@ -116,7 +135,8 @@ async def lifespan(app: FastAPI):
             
         # Initialize Redis connection for token caching
         try:
-            redis_client = redis.Redis(
+            import redis.asyncio as redis_async
+            redis_client = redis_async.Redis(
                 host=settings.redis.host,
                 port=settings.redis.port,
                 password=settings.redis.password,
@@ -154,16 +174,7 @@ async def lifespan(app: FastAPI):
             if settings.service.debug:
                 raise
         
-        # Initialize LLM service
-        try:
-            from app.services.llm_service import initialize_llm_service
-            llm_service = initialize_llm_service()
-            logger.info("LLM service initialized successfully")
-            app.state.llm_service = llm_service
-        except Exception as e:
-            logger.error("Failed to initialize LLM service", error=str(e))
-            if settings.service.debug:
-                raise
+        # LLM service already initialized above
         
         # Start background job service
         try:
@@ -179,24 +190,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("Failed to start file watcher service", error=str(e))
         
-        # Initialize knowledge base from documentation (only if not already initialized)
+        # Initialize all AI Copilot services with duplicate prevention
         try:
-            db_manager = await get_db_manager()
-            if db_manager.mongodb_client is not None:
-                status = await knowledge_base_init_service.get_initialization_status()
+            from app.services.startup_service import startup_service
+            logger.info("Initializing AI Copilot services...")
+            
+            # Run comprehensive service initialization
+            initialization_result = await startup_service.initialize_all_services()
+            
+            if initialization_result.get("errors"):
+                logger.warning("Some services failed to initialize", errors=initialization_result["errors"])
             else:
-                status = {"status": "not_initialized", "total_knowledge_entries": 0}
-            if status.get("status") != "ready" or status.get("total_knowledge_entries", 0) == 0:
-                logger.info("Scheduling knowledge base initialization...")
-                # Schedule as background job instead of blocking startup
-                await background_job_service.schedule_job(
-                    job_type="initialize_knowledge_base",
-                    function_name="refresh_knowledge_base",
-                    priority=background_job_service.JobPriority.HIGH
-                )
-                logger.info("Knowledge base initialization scheduled")
-            else:
-                logger.info(f"Knowledge base already initialized with {status.get('total_knowledge_entries', 0)} entries")
+                logger.info("All AI Copilot services initialized successfully")
+            
+            # Store initialization status in app state
+            app.state.initialization_result = initialization_result
+            
         except Exception as e:
             logger.error("Failed to initialize knowledge base", error=str(e))
             # Don't fail startup if knowledge base init fails
@@ -405,6 +414,7 @@ app.add_middleware(
 # Include API routers
 app.include_router(health_router, prefix="/api/v1", tags=["health"])
 app.include_router(conversations_router, prefix="/api/v1/conversations", tags=["conversations"])
+app.include_router(conversations_router, prefix="/conversations", tags=["conversations-root"])
 app.include_router(background_jobs_router, prefix="/api/v1/background-jobs", tags=["background-jobs"])
 app.include_router(knowledge_base_router, prefix="/api/v1/knowledge-base", tags=["knowledge-base"])
 app.include_router(websocket_router, prefix="/api/v1/ws", tags=["websocket"])

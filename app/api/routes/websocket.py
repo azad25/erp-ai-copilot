@@ -77,11 +77,24 @@ async def websocket_reasoning_endpoint(
                 if message_data.get("type") == "chat_message":
                     message = message_data.get("message", "")
                     
-                    # Stream reasoning steps using ChatService
+                    # Stream reasoning steps using ChatService with enhanced animation support
                     from app.services.chat_service import ChatService
                     chat_service = ChatService()
                     
                     try:
+                        # Send initial processing message
+                        await websocket.send_json({
+                            "type": "processing_start",
+                            "content": "Starting AI analysis...",
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "animation": {
+                                "type": "pulse",
+                                "duration": 1000
+                            }
+                        })
+                        
+                        step_count = 0
                         async for stream_response in chat_service.send_message_stream(
                             conversation_id=conversation_id,
                             user_id=str(user_id),
@@ -89,20 +102,91 @@ async def websocket_reasoning_endpoint(
                             metadata={"source": "websocket_reasoning"},
                             organization_id=getattr(user, 'organization_id', '00000000-0000-0000-0000-000000000000')
                         ):
-                            # Send each streaming response to WebSocket
-                            await websocket.send_json({
+                            # Enhanced streaming response with animation metadata
+                            response_data = {
                                 "type": stream_response.type,
                                 "content": stream_response.content,
-                                "conversation_id": stream_response.conversation_id,
-                                "message_id": stream_response.message_id,
+                                "conversation_id": str(stream_response.conversation_id) if stream_response.conversation_id else None,
+                                "message_id": str(stream_response.message_id) if stream_response.message_id else None,
                                 "metadata": stream_response.metadata,
-                                "is_complete": getattr(stream_response, 'is_complete', False)
-                            })
+                                "is_complete": getattr(stream_response, 'is_complete', False),
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
+                            
+                            # Add animation metadata for reasoning steps
+                            if stream_response.type == "reasoning_step":
+                                step_count += 1
+                                response_data["animation"] = {
+                                    "type": "slide_in",
+                                    "duration": 500,
+                                    "delay": step_count * 100,  # Stagger animations
+                                    "step_number": step_count
+                                }
+                                
+                                # Parse reasoning step for enhanced display
+                                try:
+                                    import json
+                                    step_data = json.loads(stream_response.content)
+                                    response_data["reasoning_step"] = {
+                                        "step_number": step_data.get("step_number", step_count),
+                                        "step_type": step_data.get("step_type", "analysis"),
+                                        "title": step_data.get("title", "Processing..."),
+                                        "description": step_data.get("description", ""),
+                                        "source": step_data.get("source", "AI"),
+                                        "icon": step_data.get("icon", "🧠"),
+                                        "status": step_data.get("status", "processing")
+                                    }
+                                except:
+                                    # Fallback for non-JSON content
+                                    response_data["reasoning_step"] = {
+                                        "step_number": step_count,
+                                        "step_type": "analysis",
+                                        "title": "Processing step",
+                                        "description": stream_response.content,
+                                        "source": "AI",
+                                        "icon": "🧠",
+                                        "status": "processing"
+                                    }
+                            
+                            elif stream_response.type == "chunk":
+                                # Add typing animation for text chunks
+                                response_data["animation"] = {
+                                    "type": "typing",
+                                    "duration": 50
+                                }
+                            
+                            elif stream_response.type == "start":
+                                response_data["animation"] = {
+                                    "type": "fade_in",
+                                    "duration": 300
+                                }
+                            
+                            # Send enhanced response to WebSocket
+                            await websocket.send_json(response_data)
+                            
+                        # Send completion message
+                        await websocket.send_json({
+                            "type": "processing_complete",
+                            "content": "Analysis complete",
+                            "conversation_id": conversation_id,
+                            "total_steps": step_count,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "animation": {
+                                "type": "success_pulse",
+                                "duration": 800
+                            }
+                        })
+                        
                     except Exception as e:
                         await websocket.send_json({
                             "type": "error",
                             "content": f"Reasoning error: {str(e)}",
-                            "conversation_id": conversation_id
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "animation": {
+                                "type": "shake",
+                                "duration": 500
+                            }
                         })
                 
                 elif message_data.get("type") == "ping":

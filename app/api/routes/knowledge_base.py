@@ -15,7 +15,7 @@ from app.core.exceptions import ServiceError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/knowledge-base", tags=["knowledge-base"])
+router = APIRouter(tags=["knowledge-base"])
 
 
 @router.post("/initialize")
@@ -110,6 +110,87 @@ async def refresh_knowledge_base(
         
     except Exception as e:
         logger.error(f"Knowledge base refresh failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/search")
+async def search_knowledge_base(
+    query: str,
+    limit: int = 10,
+    category: str = None,
+    current_user: Dict[str, Any] = Depends(get_current_user_with_org)
+):
+    """
+    Search the knowledge base using semantic search
+    
+    Args:
+        query: Search query text
+        limit: Maximum number of results (default: 10)
+        category: Optional category filter
+        
+    Returns:
+        List of relevant knowledge entries with similarity scores
+    """
+    try:
+        from app.services.memory_service import memory_service
+        
+        # Initialize memory service
+        await memory_service.initialize()
+        
+        # Search knowledge base
+        results = await memory_service.search_knowledge(
+            query=query,
+            limit=limit,
+            category=category,
+            similarity_threshold=0.6
+        )
+        
+        return {
+            "query": query,
+            "results": results,
+            "total_results": len(results),
+            "limit": limit,
+            "category": category
+        }
+        
+    except Exception as e:
+        logger.error(f"Knowledge base search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/categories")
+async def get_knowledge_categories(
+    current_user: Dict[str, Any] = Depends(get_current_user_with_org)
+):
+    """
+    Get all available knowledge base categories
+    
+    Returns:
+        List of categories with document counts
+    """
+    try:
+        from app.services.memory_service import memory_service
+        
+        # Initialize memory service
+        await memory_service.initialize()
+        
+        # This would need to be implemented in memory_service
+        # For now, return common categories
+        categories = [
+            {"name": "documentation", "count": 0},
+            {"name": "api_reference", "count": 0},
+            {"name": "tutorials", "count": 0},
+            {"name": "troubleshooting", "count": 0},
+            {"name": "best_practices", "count": 0}
+        ]
+        
+        return {
+            "categories": categories,
+            "total_categories": len(categories)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get knowledge categories: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

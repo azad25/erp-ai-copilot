@@ -38,12 +38,32 @@ async def reasoning(
         # No initialization needed for chat_service
         
         # Process message with reasoning
-        reasoning_steps = await chat_service.process_message_with_reasoning(
-            conversation_id=request.conversation_id,
+        conversation_id = request.conversation_id or f"reasoning-{int(time.time())}"
+        logger.info(f"Processing reasoning with conversation_id: {conversation_id}")
+        
+        reasoning_result = await chat_service.process_message_with_reasoning(
+            conversation_id=conversation_id,
             message=request.message,
-            user_id=str(current_user.id),
-            metadata=request.metadata or {}
+            user_id=str(current_user.id)
         )
+        
+        logger.info(f"Reasoning result: {reasoning_result}")
+        
+        # Check if there was an error in reasoning
+        if "error" in reasoning_result:
+            raise HTTPException(status_code=500, detail=f"Reasoning failed: {reasoning_result['error']}")
+        
+        # Extract reasoning steps from result
+        reasoning_steps_data = reasoning_result.get("reasoning_steps", [])
+        
+        # Convert to ReasoningStep objects if they're dictionaries
+        reasoning_steps = []
+        for step_data in reasoning_steps_data:
+            if isinstance(step_data, dict):
+                # Create ReasoningStep from dict
+                reasoning_steps.append(ReasoningStep(**step_data))
+            else:
+                reasoning_steps.append(step_data)
         
         # Record metrics
         response_time = time.time() - start_time
@@ -61,7 +81,7 @@ async def reasoning(
         )
         
         return ReasoningResponse(
-            conversation_id=request.conversation_id,
+            conversation_id=reasoning_result.get("conversation_id") or f"reasoning-{int(time.time())}",
             reasoning_steps=reasoning_steps,
             total_steps=len(reasoning_steps),
             processing_time=response_time,

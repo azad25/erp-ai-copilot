@@ -79,10 +79,13 @@ class BaseMessageHandler(ABC):
         )
         import json
         from datetime import datetime
+        import uuid
         
         def json_encoder(obj):
             if isinstance(obj, datetime):
                 return obj.isoformat()
+            elif isinstance(obj, uuid.UUID):
+                return str(obj)
             raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
         
         error_dict = error.dict()

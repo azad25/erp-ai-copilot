@@ -597,11 +597,17 @@ class APIGatewayClient:
         # Route to appropriate service based on table
         service_mapping = {
             "invoices": "sales",
+            "sales_orders": "sales",
             "customers": "crm", 
+            "leads": "crm",
             "products": "inventory",
+            "inventory_items": "inventory",
+            "stock_movements": "inventory",
             "employees": "hrm",
+            "departments": "hrm",
             "accounts": "finance",
-            "transactions": "finance"
+            "transactions": "finance",
+            "budgets": "finance"
         }
         
         service_name = service_mapping.get(table, "sales")  # Default to sales
@@ -611,10 +617,50 @@ class APIGatewayClient:
             "table": table,
             "data": data,
             "filters": filters,
-            "user_role": user_role
+            "user_role": user_role,
+            "timestamp": datetime.utcnow().isoformat()
         }
         
-        return await self.get_service_data(service_name, endpoint, method="POST", data=data)
+        return await self.post_service_data(service_name, endpoint, request_data)
+    
+    async def get_erp_data_summary(self, data_types: List[str] = None) -> Dict[str, Any]:
+        """
+        Get comprehensive ERP data summary from multiple services
+        
+        Args:
+            data_types: List of data types to retrieve (sales, inventory, crm, finance, hrm)
+            
+        Returns:
+            Comprehensive data summary
+        """
+        if not data_types:
+            data_types = ["sales", "inventory", "crm", "finance"]
+        
+        summary = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "data_sources": {},
+            "errors": []
+        }
+        
+        # Fetch data from each requested service
+        for data_type in data_types:
+            try:
+                if data_type == "sales":
+                    summary["data_sources"]["sales"] = await self.get_sales_summary()
+                elif data_type == "inventory":
+                    summary["data_sources"]["inventory"] = await self.get_inventory_summary()
+                elif data_type == "crm":
+                    summary["data_sources"]["crm"] = await self.get_customer_summary()
+                elif data_type == "finance":
+                    summary["data_sources"]["finance"] = await self.get_finance_summary()
+                elif data_type == "hrm":
+                    summary["data_sources"]["hrm"] = await self.get_hrm_data("overview")
+                    
+            except Exception as e:
+                logger.error(f"Failed to fetch {data_type} data: {e}")
+                summary["errors"].append(f"{data_type}: {str(e)}")
+        
+        return summary
 
     async def discover_services(self) -> Dict[str, Any]:
         """Discover available ERP services through API gateway"""
@@ -673,6 +719,54 @@ class APIGatewayClient:
             
         return health_status
     
+    async def get_sales_summary(self) -> Dict[str, Any]:
+        """Get sales summary data"""
+        try:
+            return await self.get_sales_data("overview") or {
+                "total_sales": 0,
+                "total_revenue": 0,
+                "recent_orders": 0,
+                "error": "Sales service unavailable"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def get_inventory_summary(self) -> Dict[str, Any]:
+        """Get inventory summary data"""
+        try:
+            return await self.get_inventory_data("overview") or {
+                "total_products": 0,
+                "low_stock_items": 0,
+                "total_stock_value": 0,
+                "error": "Inventory service unavailable"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def get_customer_summary(self) -> Dict[str, Any]:
+        """Get customer summary data"""
+        try:
+            return await self.get_crm_data("overview") or {
+                "total_customers": 0,
+                "new_customers": 0,
+                "active_leads": 0,
+                "error": "CRM service unavailable"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def get_finance_summary(self) -> Dict[str, Any]:
+        """Get finance summary data"""
+        try:
+            return await self.get_finance_data("overview") or {
+                "total_revenue": 0,
+                "total_expenses": 0,
+                "profit_margin": 0,
+                "error": "Finance service unavailable"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     async def close(self):
         """Close HTTP session"""
         if self.session:

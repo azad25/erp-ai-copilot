@@ -135,12 +135,13 @@ class ChatStreamResponse(BaseModel):
     message_id: UUID
     conversation_id: UUID
     content: str
+    type: str = "chunk"  # Type of stream response: start, chunk, reasoning_step, error, complete
     role: MessageRole = MessageRole.ASSISTANT
     agent_type: Optional[AgentType] = None
     model_used: Optional[str] = None
     tokens_used: Optional[int] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     is_complete: bool = False
     chunk_index: int = 0
     total_chunks: Optional[int] = None

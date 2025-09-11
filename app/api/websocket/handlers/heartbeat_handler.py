@@ -4,6 +4,8 @@ Handles heartbeat/ping messages to keep connections alive.
 """
 
 import structlog
+import json
+import uuid
 from typing import Dict, Any
 from datetime import datetime
 
@@ -12,6 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models.database import User
 from .base_handler import BaseMessageHandler
+
+def json_encoder(obj):
+    """Custom JSON encoder for WebSocket messages."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 logger = structlog.get_logger(__name__)
 
@@ -63,7 +73,7 @@ class HeartbeatHandler(BaseMessageHandler):
             }
             
             # Send heartbeat response
-            await websocket.send_json(response)
+            await websocket.send_text(json.dumps(response, default=json_encoder))
             
             logger.info(
                 "Heartbeat response sent successfully",
@@ -91,7 +101,7 @@ class HeartbeatHandler(BaseMessageHandler):
             }
             
             try:
-                await websocket.send_json(error_response)
+                await websocket.send_text(json.dumps(error_response, default=json_encoder))
             except Exception as send_error:
                 logger.error(
                     "Failed to send heartbeat error response",

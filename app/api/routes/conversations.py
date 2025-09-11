@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from app.services.conversation_service import conversation_service
-from app.middleware.auth import get_current_user
+from app.services.auth_service import get_current_user
+from app.models.api import User
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -56,14 +57,16 @@ class ConversationWithMessagesResponse(BaseModel):
 @router.post("", response_model=ConversationResponse)
 async def create_conversation(
     request: CreateConversationRequest,
-    user_id: str = Query(..., description="User ID"),
-    organization_id: str = Query(..., description="Organization ID")
+    current_user: User = Depends(get_current_user)
 ):
     """Create a new conversation session"""
     try:
+        # Initialize conversation service
+        await conversation_service.initialize()
+        
         conversation = await conversation_service.create_conversation(
-            user_id=user_id,
-            organization_id=organization_id,
+            user_id=str(current_user.id),
+            organization_id=str(current_user.organization_id),
             title=request.title,
             context=request.context,
             metadata=request.metadata
@@ -77,17 +80,19 @@ async def create_conversation(
 
 @router.get("", response_model=Dict[str, Any])
 async def get_user_conversations(
-    user_id: str = Query(..., description="User ID"),
-    organization_id: str = Query(..., description="Organization ID"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    status: Optional[str] = Query(None, description="Filter by status")
+    status: Optional[str] = Query(None, description="Filter by status"),
+    current_user: User = Depends(get_current_user)
 ):
     """Get user's conversation sessions with pagination"""
     try:
+        # Initialize conversation service
+        await conversation_service.initialize()
+        
         conversations = await conversation_service.get_user_conversations(
-            user_id=user_id,
-            organization_id=organization_id,
+            user_id=str(current_user.id),
+            organization_id=str(current_user.organization_id),
             limit=limit,
             offset=(page - 1) * limit,
             status=status
@@ -204,16 +209,15 @@ async def delete_conversation(
 
 @router.get("/search", response_model=Dict[str, Any])
 async def search_conversations(
-    user_id: str = Query(..., description="User ID"),
-    organization_id: str = Query(..., description="Organization ID"),
     query: str = Query(..., description="Search query"),
-    limit: int = Query(10, ge=1, le=50, description="Maximum results")
+    limit: int = Query(10, ge=1, le=50, description="Maximum results"),
+    current_user: User = Depends(get_current_user)
 ):
     """Search user's conversations"""
     try:
         results = await conversation_service.search_conversations(
-            user_id=user_id,
-            organization_id=organization_id,
+            user_id=str(current_user.id),
+            organization_id=str(current_user.organization_id),
             query=query,
             limit=limit
         )
@@ -230,16 +234,15 @@ async def search_conversations(
 
 @router.get("/analytics", response_model=Dict[str, Any])
 async def get_conversation_analytics(
-    user_id: str = Query(..., description="User ID"),
-    organization_id: str = Query(..., description="Organization ID"),
     conversation_id: Optional[str] = Query(None, description="Specific conversation ID"),
-    days: int = Query(30, ge=1, le=365, description="Analytics period in days")
+    days: int = Query(30, ge=1, le=365, description="Analytics period in days"),
+    current_user: User = Depends(get_current_user)
 ):
     """Get conversation analytics"""
     try:
         analytics = await conversation_service.get_conversation_analytics(
-            user_id=user_id,
-            organization_id=organization_id,
+            user_id=str(current_user.id),
+            organization_id=str(current_user.organization_id),
             conversation_id=conversation_id,
             days=days
         )

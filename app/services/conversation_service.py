@@ -15,7 +15,9 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database.connection import get_mongodb, get_redis
-from app.core.config import settings
+from app.config.settings import get_settings
+
+settings = get_settings()
 from app.models.api import ConversationStatus, MessageRole
 
 logger = logging.getLogger(__name__)

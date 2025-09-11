@@ -5,25 +5,32 @@ import asyncio
 import json
 import time
 import uuid
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 import structlog
 
 from app.database.connection import get_db_session
 from app.models.api import User
+from app.models.database import Conversation
 from app.models.api import (
     ChatRequest, ChatResponse, ChatStreamResponse,
     CreateConversationRequest, UpdateConversationRequest,
     ConversationListResponse, ConversationResponse, MessageResponse
 )
 from app.services.chat_service import ChatService
+from app.services.conversation_service import ConversationService
 from app.services.auth_service import get_current_user
 from app.core.metrics import CHAT_REQUESTS, CHAT_RESPONSES, CHAT_ERRORS
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["chat"])
+
+# Initialize conversation service
+conversation_service = ConversationService()
 
 
 @router.post("/", response_model=ChatResponse)
@@ -58,6 +65,9 @@ async def chat(
             },
             organization_id=str(current_user.organization_id)
         )
+        
+        # Get conversation_id from response
+        conversation_id = response.conversation_id or request.conversation_id or "unknown"
         
         # Response is already handled by ChatService
         ai_response_data = {
@@ -139,7 +149,51 @@ async def chat_stream(
                     organization_id=str(current_user.organization_id)
                 ):
                     # Stream all response types (reasoning_step, chunk, error, start)
-                    yield f"data: {stream_response.model_dump_json()}\n\n"
+                    # Convert to dict and serialize with json module for compatibility
+                    import json
+                    try:
+                        # Try Pydantic v2 method first
+                        if hasattr(stream_response, 'model_dump'):
+                            response_dict = stream_response.model_dump()
+                        elif hasattr(stream_response, 'dict'):
+                            response_dict = stream_response.dict()
+                        else:
+                            # Manual conversion for compatibility - use getattr with defaults
+                            response_dict = {
+                                'message_id': str(getattr(stream_response, 'message_id', 'unknown')),
+                                'conversation_id': str(getattr(stream_response, 'conversation_id', 'unknown')),
+                                'content': getattr(stream_response, 'content', ''),
+                                'type': getattr(stream_response, 'type', 'chunk'),
+                                'role': str(getattr(stream_response, 'role', 'assistant')),
+                                'agent_type': str(getattr(stream_response, 'agent_type', None)) if getattr(stream_response, 'agent_type', None) else None,
+                                'model_used': getattr(stream_response, 'model_used', None),
+                                'tokens_used': getattr(stream_response, 'tokens_used', None),
+                                'metadata': getattr(stream_response, 'metadata', {}),
+                                'created_at': getattr(stream_response, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(stream_response, 'created_at', None), 'isoformat') else str(getattr(stream_response, 'created_at', datetime.utcnow())),
+                                'is_complete': getattr(stream_response, 'is_complete', False),
+                                'chunk_index': getattr(stream_response, 'chunk_index', 0)
+                            }
+                    except Exception as e:
+                        logger.error(f"Error converting stream response to dict: {e}")
+                        logger.error(f"Stream response type: {type(stream_response)}")
+                        logger.error(f"Stream response attributes: {dir(stream_response)}")
+                        response_dict = {
+                            'type': 'error',
+                            'content': f'Serialization error: {str(e)}',
+                            'message_id': 'error',
+                            'conversation_id': 'error'
+                        }
+                    
+                    # Ensure all values are JSON serializable
+                    for key, value in response_dict.items():
+                        if hasattr(value, 'hex'):  # UUID object
+                            response_dict[key] = str(value)
+                        elif isinstance(value, datetime):
+                            response_dict[key] = value.isoformat()
+                        elif value is None:
+                            response_dict[key] = None
+                    
+                    yield f"data: {json.dumps(response_dict)}\n\n"
                 
                 # Send completion signal
                 yield f"data: {{'type': 'complete'}}\n\n"
@@ -399,13 +453,31 @@ async def get_conversation_messages(
             include_reasoning=True
         )
         
-        # Convert to response format
+        # Convert to response format with safe UUID handling
         message_responses = []
         for msg in messages:
+            # Safe UUID conversion with fallback
+            def safe_uuid_convert(value):
+                if not value:
+                    return uuid.uuid4()
+                try:
+                    return uuid.UUID(str(value))
+                except (ValueError, TypeError):
+                    # If it's a MongoDB ObjectId or invalid UUID, generate new one
+                    return uuid.uuid4()
+            
+            # Safe user_id handling
+            user_id = None
+            if msg.get("user_id"):
+                try:
+                    user_id = uuid.UUID(str(msg["user_id"]))
+                except (ValueError, TypeError):
+                    user_id = None
+            
             message_responses.append(MessageResponse(
-                id=uuid.UUID(msg["message_id"]) if msg["message_id"] else uuid.uuid4(),
-                conversation_id=uuid.UUID(conversation_id) if conversation_id else uuid.uuid4(),
-                user_id=uuid.UUID(msg["user_id"]) if msg.get("user_id") else None,
+                id=safe_uuid_convert(msg.get("message_id")),
+                conversation_id=safe_uuid_convert(conversation_id),
+                user_id=user_id,
                 role=msg["role"],
                 content=msg["content"],
                 metadata_json=msg.get("metadata", {}),

@@ -12,11 +12,14 @@ import logging
 from datetime import datetime
 from enum import Enum
 import uuid
+from uuid import UUID
 from dataclasses import dataclass, field
 
 from app.core.exceptions import AICopilotException
 from app.services.conversation_service import conversation_service
 from app.services.memory_service import memory_service
+
+logger = logging.getLogger(__name__)
 from app.services.api_gateway_client import api_gateway_client
 from app.services.kafka_integration_service import kafka_service as kafka_integration
 from app.services.service_discovery_service import service_discovery
@@ -32,6 +35,14 @@ from app.agents.base_agent import AgentResponse, AgentRequest
 from app.services.conversation_service import ConversationService
 from app.core.exceptions import ChatError, ValidationError, RateLimitError
 from app.agents.agent_orchestrator import AgentOrchestrator
+
+def json_encoder(obj):
+    """Custom JSON encoder for WebSocket messages."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
 @dataclass
@@ -149,6 +160,8 @@ class ChatService:
             )
             conversation_id = conversation_data["conversation_id"]
         else:
+            # Ensure conversation_id is a string
+            conversation_id = str(conversation_id)
             # Validate conversation exists and user has access
             conversation = await conversation_service.get_conversation(conversation_id)
             if not conversation:
@@ -263,10 +276,20 @@ class ChatService:
             )
             conversation_id = conversation_data["conversation_id"]
         else:
-            # Validate conversation exists and user has access
+            # Ensure conversation_id is a string
+            conversation_id = str(conversation_id)
+            # Try to get existing conversation, create if it doesn't exist
             conversation_data = await self.conversation_service.get_conversation(conversation_id)
             if not conversation_data:
-                raise ValidationError("Conversation not found or access denied")
+                # Create new conversation with the provided ID
+                conversation_data = await self.conversation_service.create_conversation(
+                    user_id=user_id,
+                    organization_id=organization_id or "00000000-0000-0000-0000-000000000000",
+                    title=message[:100] + "..." if len(message) > 100 else message,
+                    context=metadata or {},
+                    metadata={"source": "chat_service_stream", "conversation_id": conversation_id}
+                )
+                conversation_id = conversation_data["conversation_id"]
         
         # Store user message using conversation service
         user_message_data = await self.conversation_service.add_message(
@@ -282,8 +305,8 @@ class ChatService:
         yield ChatStreamResponse(
             type="start",
             content="",
-            conversation_id=conversation_id,
-            message_id=str(uuid.uuid4())
+            conversation_id=UUID(conversation_id),
+            message_id=uuid.uuid4()
         )
         
         # Process message with reasoning engine streaming
@@ -296,8 +319,8 @@ class ChatService:
                 yield ChatStreamResponse(
                     type="reasoning_step",
                     content=json.dumps(reasoning_chunk),
-                    conversation_id=conversation_id,
-                    message_id=str(uuid.uuid4()),
+                    conversation_id=UUID(conversation_id),
+                    message_id=uuid.uuid4(),
                     metadata=reasoning_chunk
                 )
             elif reasoning_chunk.get("type") == "final_response":
@@ -308,8 +331,8 @@ class ChatService:
                     yield ChatStreamResponse(
                         type="chunk",
                         content=word + " ",
-                        conversation_id=conversation_id,
-                        message_id=str(uuid.uuid4()),
+                        conversation_id=UUID(conversation_id),
+                        message_id=uuid.uuid4(),
                         is_complete=i == len(words) - 1,
                         metadata=reasoning_chunk.get("metadata", {})
                     )
@@ -319,8 +342,8 @@ class ChatService:
                 yield ChatStreamResponse(
                     type="error",
                     content=reasoning_chunk.get("content", "An error occurred"),
-                    conversation_id=conversation_id,
-                    message_id=str(uuid.uuid4()),
+                    conversation_id=UUID(conversation_id),
+                    message_id=uuid.uuid4(),
                     metadata={"error": reasoning_chunk.get("error")}
                 )
         
@@ -546,8 +569,8 @@ class ChatService:
             yield ChatStreamResponse(
                 type="chunk",
                 content=word + " ",
-                conversation_id=conversation_id,
-                message_id=str(uuid.uuid4()),
+                conversation_id=UUID(conversation_id),
+                message_id=uuid.uuid4(),
                 is_complete=i == len(words) - 1
             )
             await asyncio.sleep(0.1)
@@ -1120,7 +1143,11 @@ Response:
             
         except Exception as e:
             logger.error(f"Failed to process message with reasoning: {e}")
-            return {"error": str(e)}
+            return {
+                "error": str(e),
+                "conversation_id": conversation_id,
+                "reasoning_steps": []
+            }
 
     async def stream_reasoning_steps(self, websocket, conversation_id: str, message: str, user_id: str):
         """Stream reasoning steps via WebSocket"""
@@ -1134,20 +1161,22 @@ Response:
                 user_id=user_id
             ):
                 # Send the step data directly (it's already a dict)
-                await websocket.send_json(step)
+                await websocket.send_text(json.dumps(step, default=json_encoder))
             
             # Send completion signal
-            await websocket.send_json({
+            completion_data = {
                 "type": "reasoning_complete",
-                "conversation_id": conversation_id
-            })
+                "conversation_id": str(conversation_id) if conversation_id else None
+            }
+            await websocket.send_text(json.dumps(completion_data, default=json_encoder))
             
         except Exception as e:
             logger.error(f"Failed to stream reasoning steps: {e}")
-            await websocket.send_json({
+            error_data = {
                 "type": "error",
                 "message": str(e)
-            })
+            }
+            await websocket.send_text(json.dumps(error_data, default=json_encoder))
 
     async def _generate_final_response_from_reasoning(self, reasoning_results: List[Dict], original_message: str) -> str:
         """Generate final response from reasoning results"""
@@ -1207,8 +1236,19 @@ Response:
         """Initialize LLM service if not already done"""
         if self.llm_service is None:
             try:
-                from app.services.llm_service import LLMService
-                self.llm_service = LLMService()
+                from app.services.llm_service import get_llm_service
+                from app.config.settings import get_settings
+                
+                # Try to get the global LLM service first
+                self.llm_service = get_llm_service()
+                
+                # If not available, create a new one with Gemini as default
+                if self.llm_service is None:
+                    from app.services.llm_service import LLMService
+                    settings = get_settings()
+                    self.llm_service = LLMService(provider=settings.llm.default_provider)
+                    logger.info(f"Initialized LLM service with provider: {settings.llm.default_provider}")
+                    
             except Exception as e:
                 logger.error(f"Failed to initialize LLM service: {e}")
                 self.llm_service = None

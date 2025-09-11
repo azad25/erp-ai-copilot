@@ -3,6 +3,8 @@ Handler for chat message WebSocket messages.
 """
 from typing import Dict, Any, Optional
 from datetime import datetime
+import json
+import uuid
 
 from fastapi import WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +15,18 @@ from app.services.chat_service import ChatService
 from app.api.websocket.handlers.base_handler import BaseMessageHandler
 
 logger = structlog.get_logger(__name__)
+
+def json_encoder(obj):
+    """Custom JSON encoder for WebSocket messages."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, uuid.UUID):
+        return str(obj)
+    elif hasattr(obj, '__dict__'):
+        # Handle objects with dict representation
+        return {k: json_encoder(v) if isinstance(v, (datetime, uuid.UUID)) else v 
+                for k, v in obj.__dict__.items() if not k.startswith('_')}
+    return str(obj)
 
 class ChatMessageHandler(BaseMessageHandler):
     """Handler for chat message WebSocket messages."""
@@ -68,8 +82,8 @@ class ChatMessageHandler(BaseMessageHandler):
                     # Send reasoning step with proper formatting
                     reasoning_data = {
                         "type": "reasoning_step",
-                        "conversation_id": stream_response.conversation_id,
-                        "message_id": stream_response.message_id,
+                        "conversation_id": str(stream_response.conversation_id) if stream_response.conversation_id else None,
+                        "message_id": str(stream_response.message_id) if stream_response.message_id else None,
                         "timestamp": datetime.utcnow().isoformat(),
                         **stream_response.metadata  # Include all reasoning step data
                     }
@@ -79,8 +93,8 @@ class ChatMessageHandler(BaseMessageHandler):
                     # Send text chunks for typewriter effect
                     chunk_data = {
                         "type": "chunk",
-                        "conversation_id": stream_response.conversation_id,
-                        "message_id": stream_response.message_id,
+                        "conversation_id": str(stream_response.conversation_id) if stream_response.conversation_id else None,
+                        "message_id": str(stream_response.message_id) if stream_response.message_id else None,
                         "content": stream_response.content,
                         "is_complete": getattr(stream_response, 'is_complete', False),
                         "timestamp": datetime.utcnow().isoformat()
@@ -91,8 +105,8 @@ class ChatMessageHandler(BaseMessageHandler):
                     # Send processing started indicator
                     start_data = {
                         "type": "processing_started",
-                        "conversation_id": stream_response.conversation_id,
-                        "message_id": stream_response.message_id,
+                        "conversation_id": str(stream_response.conversation_id) if stream_response.conversation_id else None,
+                        "message_id": str(stream_response.message_id) if stream_response.message_id else None,
                         "timestamp": datetime.utcnow().isoformat()
                     }
                     await websocket.send_json(start_data)
@@ -101,8 +115,8 @@ class ChatMessageHandler(BaseMessageHandler):
                     # Send error message
                     error_data = {
                         "type": "error",
-                        "conversation_id": stream_response.conversation_id,
-                        "message_id": stream_response.message_id,
+                        "conversation_id": str(stream_response.conversation_id) if stream_response.conversation_id else None,
+                        "message_id": str(stream_response.message_id) if stream_response.message_id else None,
                         "content": stream_response.content,
                         "timestamp": datetime.utcnow().isoformat()
                     }
@@ -111,7 +125,7 @@ class ChatMessageHandler(BaseMessageHandler):
             # Send completion message to indicate streaming is finished
             completion_data = {
                 "type": "final_response",
-                "conversation_id": conversation_id,
+                "conversation_id": str(conversation_id) if conversation_id else None,
                 "message_id": "completion",
                 "content": "",  # Content was already sent in chunks
                 "timestamp": datetime.utcnow().isoformat(),

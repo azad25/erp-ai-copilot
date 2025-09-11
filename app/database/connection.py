@@ -458,7 +458,8 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_mongodb():
     """Dependency to get MongoDB database with circuit breaker protection."""
     try:
-        return await db_manager.get_mongodb_database()
+        db_mgr = await get_db_manager()
+        return await db_mgr.get_mongodb_database()
     except CircuitBreakerOpenError:
         logger.warning("MongoDB circuit breaker is open, service unavailable")
         raise DatabaseError("mongodb", "Service temporarily unavailable")
@@ -467,7 +468,8 @@ async def get_mongodb():
 async def get_redis():
     """Dependency to get Redis client with circuit breaker protection."""
     try:
-        return await db_manager.get_redis_client()
+        db_mgr = await get_db_manager()
+        return await db_mgr.get_redis_client()
     except (CircuitBreakerOpenError, CacheError, Exception) as e:
         logger.warning(f"Redis unavailable, continuing without cache: {e}")
         return None
@@ -475,7 +477,8 @@ async def get_redis():
 
 async def get_qdrant():
     """Dependency to get Qdrant client."""
-    return await db_manager.get_qdrant_client()
+    db_mgr = await get_db_manager()
+    return await db_mgr.get_qdrant_client()
 
 
 async def init_database():
