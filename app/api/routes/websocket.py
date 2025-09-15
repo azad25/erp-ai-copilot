@@ -125,7 +125,6 @@ async def websocket_reasoning_endpoint(
                                 
                                 # Parse reasoning step for enhanced display
                                 try:
-                                    import json
                                     step_data = json.loads(stream_response.content)
                                     response_data["reasoning_step"] = {
                                         "step_number": step_data.get("step_number", step_count),

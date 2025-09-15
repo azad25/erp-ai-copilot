@@ -246,7 +246,7 @@ async def create_conversation(
             user_id=current_user.id,
             title=conversation_data["title"],
             context=conversation_data["context"],
-            metadata_json=conversation_data["metadata"],
+            metadata=conversation_data["metadata"],
             status=conversation_data["status"],
             created_at=conversation_data["created_at"],
             updated_at=conversation_data["updated_at"]
@@ -279,17 +279,8 @@ async def list_conversations(
             status=status
         )
         
-        # Convert to response format
-        conversation_list = []
-        for conv in conversations_data["conversations"]:
-            conversation_list.append({
-                "id": conv["conversation_id"],
-                "title": conv["title"],
-                "status": conv["status"],
-                "created_at": conv["created_at"],
-                "updated_at": conv["updated_at"],
-                "message_count": conv["message_count"]
-            })
+        # Use the formatted conversations directly
+        conversation_list = conversations_data["conversations"]
         
         total = conversations_data["total"]
         

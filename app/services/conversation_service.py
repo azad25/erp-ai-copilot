@@ -253,14 +253,17 @@ class ConversationService:
         conversations = []
         async for doc in cursor:
             conversations.append({
-                "conversation_id": doc["conversation_id"],
+                "id": doc["conversation_id"],
+                "organization_id": doc["organization_id"],
+                "user_id": doc["user_id"],
                 "title": doc["title"],
                 "status": doc["status"],
-                "created_at": doc["created_at"].isoformat(),
-                "updated_at": doc["updated_at"].isoformat(),
-                "message_count": doc.get("message_count", 0),
                 "context": doc.get("context", {}),
-                "metadata": doc.get("metadata", {})
+                "metadata": doc.get("metadata", {}),
+                "created_at": doc["created_at"].isoformat(),
+                "updated_at": doc.get("updated_at", doc["created_at"]).isoformat(),
+                "message_count": doc.get("message_count", 0),
+                "last_message_at": doc.get("last_activity", doc["created_at"]).isoformat()
             })
         
         # Get total count for pagination

@@ -25,6 +25,12 @@ def json_encoder(obj):
 class PingHandler(BaseMessageHandler):
     """Handler for ping/pong WebSocket messages."""
     
+    def __init__(self, connection_manager=None):
+        """Initialize the PingHandler with logger."""
+        super().__init__(connection_manager)
+        from app.core.logging import get_logger
+        self.logger = get_logger(__name__)
+    
     async def can_handle(self, message_type: str) -> bool:
         """Check if this handler can handle the message type."""
         return message_type == "ping"
