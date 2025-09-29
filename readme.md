@@ -10,6 +10,9 @@ A sophisticated, enterprise-grade AI copilot service with **step-by-step reasoni
 - **Multi-Model Support**: OpenAI GPT-4, Anthropic Claude, and local Ollama models with context optimization
 - **RAG Integration**: Retrieval-Augmented Generation with Qdrant vector search
 
+![](./preview-2.png)
+![](./preview-1.png)
+
 ### 💬 Conversation Management
 - **Session-based Loading**: Load conversations by session ID for optimized frontend performance
 - **MongoDB Persistence**: Conversation storage with Redis caching for fast access
