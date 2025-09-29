@@ -3,6 +3,7 @@ Handler for ping/pong WebSocket messages.
 """
 import time
 from typing import Dict, Any
+import structlog
 
 from fastapi import WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models.database import User
 from app.api.websocket.handlers.base_handler import BaseMessageHandler
 from app.api.websocket.models.messages import WebSocketPingMessage, WebSocketStatusMessage
+
+logger = structlog.get_logger(__name__)
 
 class PingHandler(BaseMessageHandler):
     """Handler for ping/pong WebSocket messages."""
@@ -29,8 +32,15 @@ class PingHandler(BaseMessageHandler):
         try:
             # Calculate latency if timestamp is provided
             latency_ms = None
-            if message.timestamp:
-                latency_ms = int((time.time() - message.timestamp) * 1000)
+            # Handle both dict and object message formats
+            timestamp = None
+            if hasattr(message, 'timestamp'):
+                timestamp = message.timestamp
+            elif isinstance(message, dict) and 'timestamp' in message:
+                timestamp = message['timestamp']
+            
+            if timestamp:
+                latency_ms = int((time.time() - timestamp) * 1000)
             
             # Send pong response
             pong = WebSocketStatusMessage(
@@ -43,7 +53,7 @@ class PingHandler(BaseMessageHandler):
             
         except Exception as e:
             # Log the error but don't fail the connection
-            self.logger.error(
+            logger.error(
                 "Error handling ping message",
                 error=str(e),
                 user_id=user.id,

@@ -2,6 +2,7 @@
 Handler for typing indicator WebSocket messages.
 """
 from typing import Dict, Any
+import structlog
 
 from fastapi import WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models.database import User
 from app.api.websocket.handlers.base_handler import BaseMessageHandler
 from app.api.websocket.models.messages import WebSocketTypingIndicator
+
+logger = structlog.get_logger(__name__)
 
 class TypingIndicatorHandler(BaseMessageHandler):
     """Handler for typing indicator WebSocket messages."""
@@ -53,7 +56,7 @@ class TypingIndicatorHandler(BaseMessageHandler):
         
         except Exception as e:
             # Log the error but don't fail the connection
-            self.logger.error(
+            logger.error(
                 "Error handling typing indicator",
                 error=str(e),
                 user_id=user.id,
