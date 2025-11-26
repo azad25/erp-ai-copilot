@@ -73,8 +73,8 @@ services:
       - GRPC_PORT=50055
       
       # CORS Configuration
-      - CORS_ORIGINS=http://localhost:3000,http://erp-frontend:3000,http://localhost:8003,http://localhost,http://localhost:8000
-      - SECURITY_CORS_ORIGINS=http://localhost:3000,http://erp-frontend:3000,http://localhost:8003,http://localhost
+      - CORS_ORIGINS="*"
+      - SECURITY_CORS_ORIGINS="*"
       
       # Security
       - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
