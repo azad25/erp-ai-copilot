@@ -28,7 +28,7 @@ services:
       - DB_MIN_CONNECTIONS=5
       
       # MongoDB Configuration
-      - MONGODB_URI=mongodb://${MONGODB_ROOT_USERNAME:-root}:${MONGODB_ROOT_PASSWORD:-password}@mongodb:27017/
+      - MONGODB_URI=mongodb://mongodb:27017/
       - MONGODB_DATABASE=erp_ai_conversations
       - MONGODB_MAX_POOL_SIZE=10
       - MONGODB_MIN_POOL_SIZE=1

@@ -321,6 +321,142 @@ try:
 except ImportError:
     httpx = None
 
+
+class HuggingFaceProvider(BaseLLMProvider):
+    """HuggingFace Router API provider using OpenAI-compatible interface."""
+
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+        """Initialize HuggingFace provider.
+        
+        Args:
+            api_key: HuggingFace API token (HF_TOKEN)
+            base_url: Base URL for HuggingFace Router API
+        """
+        self.api_key = api_key or os.getenv("HF_TOKEN")
+        self.base_url = base_url or "https://router.huggingface.co/v1"
+        self.client = None
+        self.logger = structlog.get_logger("huggingface_provider")
+        
+        if self.api_key and openai:
+            try:
+                self.client = AsyncOpenAI(
+                    base_url=self.base_url,
+                    api_key=self.api_key
+                )
+                self.logger.info("HuggingFace provider initialized", base_url=self.base_url)
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize HuggingFace client: {str(e)}")
+
+    def validate_config(self) -> bool:
+        """Validate that the provider is properly configured."""
+        if not self.api_key:
+            self.logger.warning("HuggingFace API token not configured")
+            return False
+        if not openai:
+            self.logger.warning("OpenAI library not available for HuggingFace provider")
+            return False
+        return True
+
+    def get_available_models(self) -> List[str]:
+        """Get list of available models for this provider."""
+        return [
+            "moonshotai/Kimi-K2-Thinking:novita",
+            "openai/gpt-oss-20b:groq",
+            "meta-llama/Llama-3.3-70B-Instruct",
+            "Qwen/Qwen2.5-72B-Instruct",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "google/gemma-2-9b-it",
+            "microsoft/Phi-3-medium-4k-instruct"
+        ]
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        """Generate a response from the LLM.
+        
+        Args:
+            request: The LLM request containing messages and generation parameters
+            
+        Returns:
+            LLMResponse containing the generated content and metadata
+            
+        Raises:
+            AIModelError: If there's an error generating the response
+        """
+        if not self.client:
+            raise AIModelError("huggingface", request.model, "HuggingFace client not initialized")
+
+        try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            
+            messages.extend([
+                {"role": msg.role, "content": msg.content}
+                for msg in request.messages
+            ])
+
+            response = await self.client.chat.completions.create(
+                model=request.model,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens
+            )
+
+            return LLMResponse(
+                content=response.choices[0].message.content,
+                model=response.model,
+                tokens_used=response.usage.total_tokens if response.usage else 0,
+                finish_reason=response.choices[0].finish_reason,
+                metadata={"provider": "huggingface"}
+            )
+
+        except Exception as e:
+            error_msg = str(e)
+            self.logger.error(f"HuggingFace API error: {error_msg}", model=request.model)
+            raise AIModelError("huggingface", request.model, f"HuggingFace API error: {error_msg}")
+
+    async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
+        """Generate a streaming response from the LLM.
+        
+        Args:
+            request: The LLM request containing messages and generation parameters
+            
+        Yields:
+            Chunks of the generated response as they become available
+            
+        Raises:
+            AIModelError: If there's an error generating the response
+        """
+        if not self.client:
+            raise AIModelError("huggingface", request.model, "HuggingFace client not initialized")
+
+        try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            
+            messages.extend([
+                {"role": msg.role, "content": msg.content}
+                for msg in request.messages
+            ])
+
+            stream = await self.client.chat.completions.create(
+                model=request.model,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=True
+            )
+
+            async for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            error_msg = str(e)
+            self.logger.error(f"HuggingFace streaming error: {error_msg}", model=request.model)
+            raise AIModelError("huggingface", request.model, f"HuggingFace streaming error: {error_msg}")
+
+
 class GeminiProvider(BaseLLMProvider):
     """Gemini LLM Provider."""
 
@@ -510,6 +646,7 @@ class LLMService:
         providers_to_init = [
             ("ollama", OllamaProvider),
             ("gemini", GeminiProvider),
+            ("huggingface", HuggingFaceProvider),
             ("openai", OpenAIProvider),
             ("anthropic", AnthropicProvider)
         ]
@@ -531,6 +668,12 @@ class LLMService:
                         self.logger.warning("GEMINI_API_KEY not found in environment")
                         continue
                     provider = provider_class(api_key=gemini_api_key)
+                elif provider_name == "huggingface":
+                    hf_token = os.getenv("HF_TOKEN")
+                    if not hf_token:
+                        self.logger.warning("HF_TOKEN not found in environment")
+                        continue
+                    provider = provider_class(api_key=hf_token)
                 else:
                     provider = provider_class()
                 
@@ -556,6 +699,15 @@ class LLMService:
             "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
             "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
             "gemini": ["gemini2.0:flash", "gemini2.5:pro"],
+            "huggingface": [
+                "moonshotai/Kimi-K2-Thinking:novita",
+                "openai/gpt-oss-20b:groq",
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/Qwen2.5-72B-Instruct",
+                "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                "google/gemma-2-9b-it",
+                "microsoft/Phi-3-medium-4k-instruct"
+            ],
             "ollama": [
                 "unibase-erp",  # Custom ERP model
             ]
@@ -579,6 +731,15 @@ class LLMService:
             "claude-3-5-sonnet-20241022": "anthropic",
             "claude-3-5-haiku-20241022": "anthropic",
             "claude-3-opus-20240229": "anthropic",
+            
+            # HuggingFace models
+            "moonshotai/Kimi-K2-Thinking:novita": "huggingface",
+            "openai/gpt-oss-20b:groq": "huggingface",
+            "meta-llama/Llama-3.3-70B-Instruct": "huggingface",
+            "Qwen/Qwen2.5-72B-Instruct": "huggingface",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1": "huggingface",
+            "google/gemma-2-9b-it": "huggingface",
+            "microsoft/Phi-3-medium-4k-instruct": "huggingface",
             
             # Ollama models (partial list)
             "unibase-erp": "ollama",  # Custom ERP model
@@ -674,16 +835,18 @@ class LLMService:
     async def _try_fallback_providers(self, request: LLMRequest, failed_provider: str) -> LLMResponse:
         """Try fallback providers when primary provider fails"""
         fallback_order = {
-            "gemini": ["openai", "anthropic", "ollama"],
-            "openai": ["anthropic", "gemini", "ollama"], 
-            "anthropic": ["openai", "gemini", "ollama"],
-            "ollama": ["openai", "anthropic", "gemini"]
+            "gemini": ["huggingface", "openai", "anthropic", "ollama"],
+            "huggingface": ["gemini", "openai", "anthropic", "ollama"],
+            "openai": ["huggingface", "anthropic", "gemini", "ollama"], 
+            "anthropic": ["huggingface", "openai", "gemini", "ollama"],
+            "ollama": ["huggingface", "openai", "anthropic", "gemini"]
         }
         
         fallback_models = {
             "openai": "gpt-4o-mini",
             "anthropic": "claude-3-haiku-20240307",
             "gemini": "gemini-pro",
+            "huggingface": "meta-llama/Llama-3.3-70B-Instruct",
             "ollama": "llama3.2:3b"
         }
         

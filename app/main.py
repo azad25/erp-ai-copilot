@@ -28,6 +28,7 @@ from app.services.third_party_api_service import third_party_api_service
 from app.services.system_command_service import system_command_service
 from app.api.v1.router import api_router
 from app.api.routes import conversations, background_jobs, websocket, memory, system_commands, third_party_apis
+from app.api import llm_settings
 try:
     from app.api.routes import grpc_router
 except ImportError:
@@ -462,6 +463,7 @@ async def websocket_chat_direct(websocket: WebSocket):
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
 app.include_router(system_commands.router, prefix="/api/v1/system-commands", tags=["system-commands"])
 app.include_router(third_party_apis.router, prefix="/api/v1/third-party-apis", tags=["third-party-apis"])
+app.include_router(llm_settings.router, tags=["llm-settings"])
 app.include_router(api_router, prefix="/api/v1")
 
 if grpc_router:
