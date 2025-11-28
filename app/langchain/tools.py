@@ -98,6 +98,51 @@ async def search_docs_tool(query: str, max_results: int = 5) -> str:
         return f"Error searching documents: {str(e)}"
 
 
+async def create_background_task_tool(task_type: str, parameters: Dict[str, Any]) -> str:
+    """Create a background task"""
+    try:
+        from app.services.background_task_service import background_task_service, TaskType
+        
+        # Get user_id from context (would come from request in real implementation)
+        user_id = parameters.get('user_id', 'system')
+        
+        task_id = await background_task_service.create_task(
+            task_type=TaskType(task_type),
+            user_id=user_id,
+            parameters=parameters
+        )
+        
+        return f"Background task created successfully. Task ID: {task_id}. You will be notified when it completes."
+    except Exception as e:
+        return f"Error creating background task: {str(e)}"
+
+
+async def generate_chart_tool(chart_type: str, query: str) -> str:
+    """Generate a chart or visualization"""
+    try:
+        from app.services.chart_service import chart_service
+        import json
+        
+        chart_data = chart_service.create_chart_from_query(query, None)
+        
+        # Return as JSON string that will be parsed by the frontend
+        return json.dumps(chart_data)
+    except Exception as e:
+        return f"Error generating chart: {str(e)}"
+
+
+class BackgroundTaskInput(BaseModel):
+    """Input for background task tool"""
+    task_type: str = Field(description="Type of task (report_generation, chart_generation, forecast_calculation, data_analysis, bulk_export)")
+    parameters: Dict[str, Any] = Field(description="Task parameters")
+
+
+class ChartGenerationInput(BaseModel):
+    """Input for chart generation tool"""
+    chart_type: str = Field(description="Type of chart (line, bar, pie, area, scatter)")
+    query: str = Field(description="User's query to determine chart content")
+
+
 def get_erp_tools() -> List[Tool]:
     """
     Get all ERP tools for LangChain agents
@@ -151,6 +196,40 @@ def get_erp_tools() -> List[Tool]:
             Always search docs first before answering questions about the ERP system.
             """,
             args_schema=DocumentSearchInput
+        ),
+        
+        StructuredTool.from_function(
+            coroutine=create_background_task_tool,
+            name="create_background_task",
+            description="""Create a background task for long-running operations.
+            Use this when user requests:
+            - Report generation (PDF/Excel)
+            - Complex data analysis
+            - Forecast calculations
+            - Bulk data exports
+            
+            Task types: report_generation, chart_generation, forecast_calculation, data_analysis, bulk_export
+            
+            The user will be notified via WebSocket when the task completes.
+            """,
+            args_schema=BackgroundTaskInput
+        ),
+        
+        StructuredTool.from_function(
+            coroutine=generate_chart_tool,
+            name="generate_chart",
+            description="""Generate interactive charts and visualizations.
+            Use this when user wants to see:
+            - Sales trends (line/area charts)
+            - Comparisons (bar charts)
+            - Distributions (pie/donut charts)
+            - Forecasts (line charts with predictions)
+            - KPI metrics
+            - Data tables
+            
+            The chart will be rendered directly in the chat interface.
+            """,
+            args_schema=ChartGenerationInput
         ),
     ]
     
