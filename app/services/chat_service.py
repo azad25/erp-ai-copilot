@@ -33,6 +33,15 @@ from app.services.conversation_service import ConversationService
 from app.core.exceptions import ChatError, ValidationError, RateLimitError
 from app.agents.agent_orchestrator import AgentOrchestrator
 
+# LangChain/LangGraph Integration
+USE_LANGCHAIN = True  # Feature flag to enable LangChain
+try:
+    from app.services.langchain_chat_service import langchain_chat_service
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    logging.warning("LangChain service not available, falling back to custom agents")
+
 
 @dataclass
 class ChatStreamResponse:
@@ -57,9 +66,21 @@ class ConversationContext:
 
 
 class ChatService:
-    """Enhanced Chat service for handling AI conversations with reasoning steps and multi-source integration"""
+    """Enhanced Chat service for handling AI conversations with reasoning steps and multi-source integration
+    
+    Now uses LangChain/LangGraph by default for intelligent tool-based responses.
+    Falls back to custom agents if LangChain is not available.
+    """
     
     def __init__(self):
+        # LangChain integration
+        self.use_langchain = USE_LANGCHAIN and LANGCHAIN_AVAILABLE
+        if self.use_langchain:
+            logging.info("ChatService initialized with LangChain/LangGraph")
+        else:
+            logging.info("ChatService initialized with custom agents")
+        
+        # Legacy components (for fallback)
         self.reasoning_engine = ReasoningEngine(redis_client_instance=None)
         self.rate_limit_window = 60  # seconds
         self.rate_limit_max_requests = 10
@@ -72,7 +93,7 @@ class ChatService:
         self.conversation_timeout = 3600  # 1 hour timeout for conversations
         self.conversation_service = conversation_service  # Reference to conversation service
         
-        # Initialize orchestrator
+        # Initialize orchestrator (fallback)
         from app.agents.agent_orchestrator import AgentOrchestrator
         self.orchestrator = AgentOrchestrator()
 
@@ -124,6 +145,8 @@ class ChatService:
         Send a message in a conversation and get AI response.
         Handles conversation creation if conversation_id is None.
         
+        NOW USES LANGCHAIN/LANGGRAPH FOR INTELLIGENT TOOL-BASED RESPONSES!
+        
         Args:
             conversation_id: Target conversation ID (None to create new)
             user_id: User sending the message
@@ -174,6 +197,43 @@ class ChatService:
         # Check message limits
         if self.active_conversations[conversation_id].message_count >= 1000:
             raise ValidationError("Maximum messages per conversation exceeded")
+        
+        # ============================================================
+        # LANGCHAIN/LANGGRAPH INTEGRATION
+        # ============================================================
+        if self.use_langchain:
+            try:
+                logging.info(f"Using LangChain/LangGraph for message processing")
+                result = await langchain_chat_service.send_message(
+                    message=message,
+                    user_id=user_id,
+                    organization_id=organization_id or "default",
+                    conversation_id=conversation_id,
+                    user_role=metadata.get("role", "user") if metadata else "user",
+                    metadata=metadata
+                )
+                
+                # Update conversation context
+                self.active_conversations[conversation_id].message_count += 2
+                self.active_conversations[conversation_id].last_activity = datetime.utcnow()
+                
+                # Convert to ChatResponse format
+                return ChatResponse(
+                    conversation_id=uuid.UUID(result["conversation_id"]) if isinstance(result["conversation_id"], str) else result["conversation_id"],
+                    message_id=result["message_id"],
+                    content=result["content"],
+                    agent_type=None,
+                    created_at=datetime.utcnow(),
+                    metadata={
+                        **result.get("metadata", {}),
+                        "langchain": True,
+                        "framework": "langgraph"
+                    }
+                )
+            except Exception as e:
+                logging.error(f"LangChain error, falling back to custom agents: {e}")
+                # Fall through to legacy implementation
+        # ============================================================
         
         # Store user message using conversation service
         user_message_data = await conversation_service.add_message(
@@ -251,6 +311,39 @@ class ChatService:
         
         # Initialize conversation service and handle conversation creation/validation
         await self.conversation_service.initialize()
+        
+        # ============================================================
+        # LANGCHAIN/LANGGRAPH STREAMING INTEGRATION
+        # ============================================================
+        if self.use_langchain:
+            try:
+                logging.info(f"Using LangChain/LangGraph streaming for message processing")
+                async for chunk in langchain_chat_service.send_message_stream(
+                    message=message,
+                    user_id=user_id,
+                    organization_id=organization_id or "default",
+                    conversation_id=conversation_id,
+                    user_role=metadata.get("role", "user") if metadata else "user",
+                    metadata=metadata
+                ):
+                    # Convert to ChatStreamResponse format
+                    yield ChatStreamResponse(
+                        type=chunk.get("type", "chunk"),
+                        content=chunk.get("content", ""),
+                        conversation_id=chunk.get("conversation_id", conversation_id or ""),
+                        message_id=chunk.get("message_id", str(uuid.uuid4())),
+                        is_complete=chunk.get("type") == "complete",
+                        metadata={
+                            **chunk.get("metadata", {}),
+                            "langchain": True,
+                            "framework": "langgraph"
+                        }
+                    )
+                return  # Exit after successful LangChain streaming
+            except Exception as e:
+                logging.error(f"LangChain streaming error, falling back to custom agents: {e}")
+                # Fall through to legacy implementation
+        # ============================================================
         
         # Create or get conversation (same logic as send_message)
         if not conversation_id:

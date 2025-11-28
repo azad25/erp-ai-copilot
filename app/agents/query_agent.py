@@ -37,6 +37,7 @@ class QueryAgent(BaseAgent):
             temperature=0.3
         )
         self.logger = structlog.get_logger("query_agent")
+        self._erp_data_service = None
 
     def _get_default_system_prompt(self) -> str:
         """Get the default system prompt for query agent"""
@@ -197,7 +198,7 @@ For complex queries, break down the response into:
 
     async def process_request(self, request: AgentRequest) -> AgentResponse:
         """
-        Process a query request with enhanced query understanding.
+        Process a query request with enhanced query understanding, RAG, and real data.
         
         Args:
             request: AgentRequest containing the user's query
@@ -206,21 +207,46 @@ For complex queries, break down the response into:
             AgentResponse with query results and analysis
         """
         try:
+            # Initialize ERP data service if needed
+            if not self._erp_data_service:
+                from app.services.erp_data_service import get_erp_data_service
+                self._erp_data_service = await get_erp_data_service()
+            
             # Parse query intent
             query_intent = await self._parse_query_intent(request.message)
             
-            # Add query context to request
+            # Retrieve real ERP data based on query type
+            erp_data = await self._fetch_relevant_erp_data(query_intent)
+            
+            # Add query context and real data to request
             enhanced_context = {
                 **request.context,
                 "query_intent": query_intent,
-                "tools_available": [tool["name"] for tool in self.get_tools()]
+                "tools_available": [tool["name"] for tool in self.get_tools()],
+                "erp_data": erp_data
             }
             
+            # Format ERP data for the prompt
+            if erp_data:
+                data_summary = self._format_erp_data_for_prompt(erp_data)
+                enhanced_message = f"""{request.message}
+
+CURRENT ERP DATA:
+{data_summary}
+
+Please use this real-time data to answer the question accurately."""
+            else:
+                enhanced_message = request.message
+            
             enhanced_request = AgentRequest(
-                message=request.message,
+                message=enhanced_message,
                 context=enhanced_context,
                 session_id=request.session_id,
-                metadata=request.metadata
+                metadata={
+                    **request.metadata,
+                    "use_rag": True,  # Enable RAG for documentation
+                    "rag_max_results": 3
+                }
             )
             
             return await super().process_request(enhanced_request)
@@ -411,3 +437,96 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             ])
         
         return recommendations
+    
+    async def _fetch_relevant_erp_data(self, query_intent: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch relevant ERP data based on query intent"""
+        if not self._erp_data_service:
+            return {}
+        
+        query_type = query_intent.get("query_type", "general")
+        erp_data = {}
+        
+        try:
+            # Always include system overview for context
+            erp_data["system_overview"] = await self._erp_data_service.get_system_overview()
+            
+            # Fetch specific data based on query type
+            if query_type == "general" or "user" in query_intent.get("original_query", "").lower():
+                erp_data["user_statistics"] = await self._erp_data_service.get_user_statistics()
+            
+            if query_type == "general" or "conversation" in query_intent.get("original_query", "").lower():
+                erp_data["conversation_summary"] = await self._erp_data_service.get_conversations_summary()
+            
+            if query_type == "general" or "cache" in query_intent.get("original_query", "").lower():
+                erp_data["cache_statistics"] = await self._erp_data_service.get_cache_statistics()
+            
+            # For specific queries, fetch targeted data
+            if "recent" in query_intent.get("original_query", "").lower():
+                erp_data["recent_messages"] = await self._erp_data_service.get_recent_messages(limit=5)
+            
+            self.logger.info(
+                "Fetched ERP data",
+                query_type=query_type,
+                data_keys=list(erp_data.keys())
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching ERP data: {e}")
+            erp_data["error"] = str(e)
+        
+        return erp_data
+    
+    def _format_erp_data_for_prompt(self, erp_data: Dict[str, Any]) -> str:
+        """Format ERP data for inclusion in LLM prompt"""
+        formatted_parts = []
+        
+        # Format system overview
+        if "system_overview" in erp_data:
+            overview = erp_data["system_overview"]
+            formatted_parts.append("## System Status")
+            formatted_parts.append(f"Timestamp: {overview.get('timestamp', 'N/A')}")
+            
+            if "databases" in overview:
+                formatted_parts.append("\n### Database Status:")
+                for db_name, db_info in overview["databases"].items():
+                    status = db_info.get("status", "unknown")
+                    formatted_parts.append(f"- {db_name}: {status}")
+        
+        # Format user statistics
+        if "user_statistics" in erp_data:
+            stats = erp_data["user_statistics"]
+            formatted_parts.append("\n## User Statistics")
+            formatted_parts.append(f"- Total Users: {stats.get('total_users', 0)}")
+            formatted_parts.append(f"- Active Users: {stats.get('active_users', 0)}")
+            formatted_parts.append(f"- Recent Signups (30d): {stats.get('recent_signups_30d', 0)}")
+        
+        # Format conversation summary
+        if "conversation_summary" in erp_data:
+            conv = erp_data["conversation_summary"]
+            formatted_parts.append("\n## AI Conversation Statistics")
+            formatted_parts.append(f"- Total Conversations: {conv.get('total_conversations', 0)}")
+            formatted_parts.append(f"- Active Conversations: {conv.get('active_conversations', 0)}")
+            formatted_parts.append(f"- Recent (7d): {conv.get('recent_conversations_7d', 0)}")
+            
+            if "top_users" in conv and conv["top_users"]:
+                formatted_parts.append("\n### Most Active Users:")
+                for user in conv["top_users"][:3]:
+                    formatted_parts.append(f"- User {user['user_id']}: {user['conversations']} conversations")
+        
+        # Format cache statistics
+        if "cache_statistics" in erp_data:
+            cache = erp_data["cache_statistics"]
+            formatted_parts.append("\n## Cache Statistics")
+            formatted_parts.append(f"- Total Keys: {cache.get('total_keys', 0)}")
+            formatted_parts.append(f"- Memory Used: {cache.get('memory_used', 'N/A')}")
+            formatted_parts.append(f"- Hit Rate: {cache.get('hit_rate', 0)}%")
+        
+        # Format recent messages
+        if "recent_messages" in erp_data and erp_data["recent_messages"]:
+            formatted_parts.append("\n## Recent AI Messages (Sample)")
+            for msg in erp_data["recent_messages"][:3]:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")[:50]
+                formatted_parts.append(f"- [{role}]: {content}...")
+        
+        return "\n".join(formatted_parts)

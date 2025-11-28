@@ -17,6 +17,9 @@ from pydantic import BaseModel, Field
 from app.services.llm_service import get_llm_service, LLMRequest, LLMMessage, LLMResponse
 from app.core.exceptions import AgentError, AIModelError
 from app.core.cache_manager import CacheManager
+from app.rag.service import RAGService
+from app.rag.models import SearchQuery, SearchFilter
+from app.database.connection import get_db_manager
 
 
 class AgentRequest(BaseModel):
@@ -84,6 +87,10 @@ class BaseAgent(ABC):
         self.logger = structlog.get_logger(f"agent.{name}")
         self.cache = CacheManager()
         
+        # Initialize RAG service (lazy initialization)
+        self._rag_service: Optional[RAGService] = None
+        self._rag_initialized = False
+        
         # Initialize memory storage
         self._memory: Dict[str, AgentMemory] = {}
         
@@ -92,7 +99,9 @@ class BaseAgent(ABC):
             "total_requests": 0,
             "total_tokens": 0,
             "total_errors": 0,
-            "average_response_time": 0.0
+            "average_response_time": 0.0,
+            "rag_queries": 0,
+            "rag_hits": 0
         }
 
     @abstractmethod
@@ -148,8 +157,35 @@ class BaseAgent(ABC):
             # Get or create memory for session
             memory = self._get_or_create_memory(request.session_id)
             
-            # Build conversation history
+            # Retrieve knowledge context from RAG (if enabled)
+            use_rag = request.metadata.get("use_rag", True)  # RAG enabled by default
+            knowledge_context = {}
+            enhanced_message = request.message
+            
+            if use_rag:
+                knowledge_context = await self.retrieve_knowledge_context(
+                    query=request.message,
+                    max_results=request.metadata.get("rag_max_results", 5),
+                    similarity_threshold=request.metadata.get("rag_threshold", 0.7)
+                )
+                
+                # Enhance message with knowledge context if available
+                if knowledge_context.get("rag_available") and knowledge_context.get("context_text"):
+                    enhanced_message = self._enhance_prompt_with_knowledge(
+                        request.message,
+                        knowledge_context
+                    )
+                    self.logger.info(
+                        "Enhanced prompt with RAG context",
+                        agent=self.name,
+                        documents_retrieved=knowledge_context.get("results_count", 0)
+                    )
+            
+            # Build conversation history with enhanced message
             messages = self._build_conversation_history(memory, request)
+            # Replace last message with enhanced version
+            if messages and use_rag and knowledge_context.get("rag_available"):
+                messages[-1] = LLMMessage(role="user", content=enhanced_message)
             
             # Get temperature and max_tokens from metadata or use instance defaults
             temperature = request.metadata.get("temperature", self.temperature)
@@ -175,9 +211,18 @@ class BaseAgent(ABC):
             end_time = asyncio.get_event_loop().time()
             self._update_stats(response.tokens_used, end_time - start_time)
 
+            # Add RAG metadata to response
+            response_metadata = response.metadata.copy()
+            if knowledge_context:
+                response_metadata.update({
+                    "rag_used": knowledge_context.get("rag_available", False),
+                    "rag_documents_count": knowledge_context.get("results_count", 0),
+                    "rag_sources": knowledge_context.get("sources", [])
+                })
+            
             return AgentResponse(
                 content=response.content,
-                metadata=response.metadata,
+                metadata=response_metadata,
                 session_id=request.session_id,
                 tokens_used=response.tokens_used,
                 model_used=response.model
@@ -376,3 +421,167 @@ class BaseAgent(ABC):
                 formatted_parts.append(f"{key}: {value}")
         
         return "\n".join(formatted_parts)
+    
+    async def _initialize_rag_service(self):
+        """Initialize RAG service for knowledge base access"""
+        if not self._rag_initialized:
+            try:
+                db_manager = await get_db_manager()
+                self._rag_service = RAGService(db_manager)
+                await self._rag_service.initialize()
+                self._rag_initialized = True
+                self.logger.info("RAG service initialized", agent=self.name)
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to initialize RAG service, continuing without knowledge base",
+                    agent=self.name,
+                    error=str(e)
+                )
+                self._rag_service = None
+                self._rag_initialized = False
+    
+    async def retrieve_knowledge_context(
+        self, 
+        query: str, 
+        max_results: int = 5,
+        similarity_threshold: float = 0.7,
+        document_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Retrieve relevant context from knowledge base using RAG.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results to return
+            similarity_threshold: Minimum similarity score
+            document_type: Optional document type filter
+            
+        Returns:
+            Dictionary containing retrieved documents and metadata
+        """
+        # Initialize RAG service if needed
+        if not self._rag_initialized:
+            await self._initialize_rag_service()
+        
+        # If RAG service not available, return empty context
+        if not self._rag_service:
+            return {
+                "documents": [],
+                "context_text": "",
+                "sources": [],
+                "rag_available": False
+            }
+        
+        try:
+            self._stats["rag_queries"] += 1
+            
+            # Create search query
+            search_filter = SearchFilter(document_type=document_type) if document_type else None
+            search_query = SearchQuery(
+                query_text=query,
+                max_results=max_results,
+                similarity_threshold=similarity_threshold,
+                filters=search_filter
+            )
+            
+            # Perform search
+            search_result = await self._rag_service.search(search_query)
+            
+            if search_result and hasattr(search_result, 'results'):
+                results = search_result.results
+            elif isinstance(search_result, list):
+                results = search_result
+            else:
+                results = []
+            
+            # Track RAG hits
+            if results:
+                self._stats["rag_hits"] += 1
+            
+            # Format results
+            documents = []
+            sources = []
+            context_parts = []
+            
+            for i, result in enumerate(results):
+                doc_content = result.get("content", "")
+                doc_metadata = result.get("metadata", {})
+                doc_title = doc_metadata.get("title", f"Document {i+1}")
+                similarity = result.get("similarity", 0.0)
+                
+                documents.append({
+                    "title": doc_title,
+                    "content": doc_content,
+                    "similarity": similarity,
+                    "metadata": doc_metadata
+                })
+                
+                sources.append(f"{doc_title} (relevance: {similarity:.2f})")
+                context_parts.append(f"[{doc_title}]\n{doc_content}\n")
+            
+            context_text = "\n---\n".join(context_parts) if context_parts else ""
+            
+            self.logger.info(
+                "Retrieved knowledge context",
+                agent=self.name,
+                query=query[:50],
+                results_count=len(documents),
+                rag_available=True
+            )
+            
+            return {
+                "documents": documents,
+                "context_text": context_text,
+                "sources": sources,
+                "rag_available": True,
+                "results_count": len(documents)
+            }
+            
+        except Exception as e:
+            self.logger.error(
+                "Error retrieving knowledge context",
+                agent=self.name,
+                error=str(e)
+            )
+            return {
+                "documents": [],
+                "context_text": "",
+                "sources": [],
+                "rag_available": False,
+                "error": str(e)
+            }
+    
+    def _enhance_prompt_with_knowledge(
+        self, 
+        user_message: str, 
+        knowledge_context: Dict[str, Any]
+    ) -> str:
+        """
+        Enhance user prompt with retrieved knowledge context.
+        
+        Args:
+            user_message: Original user message
+            knowledge_context: Retrieved knowledge context
+            
+        Returns:
+            Enhanced prompt with context
+        """
+        if not knowledge_context.get("rag_available") or not knowledge_context.get("context_text"):
+            return user_message
+        
+        context_text = knowledge_context["context_text"]
+        sources = knowledge_context.get("sources", [])
+        
+        enhanced_prompt = f"""Based on the following knowledge base information, please answer the user's question:
+
+KNOWLEDGE BASE CONTEXT:
+{context_text}
+
+USER QUESTION:
+{user_message}
+
+Please provide a comprehensive answer using the knowledge base information above. If the knowledge base doesn't contain relevant information, you can use your general knowledge but mention that it's not from the knowledge base.
+
+If you use information from the knowledge base, please cite the sources at the end of your response."""
+        
+        return enhanced_prompt
