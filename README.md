@@ -686,33 +686,101 @@ filters = rbac_service.filter_query_by_role(
 ```
 erp-ai-copilot/
 ├── app/
-│   ├── api/v1/endpoints/
-│   │   └── tasks.py              # Background task API
+│   ├── agents/                   # AI Agent implementations
+│   │   ├── base_agent.py         # Base agent class
+│   │   ├── query_agent.py        # Query processing agent
+│   │   ├── action_agent.py       # Action execution agent
+│   │   ├── analytics_agent.py    # Analytics agent
+│   │   └── master_agent.py       # Master orchestrator
+│   ├── api/
+│   │   ├── v1/
+│   │   │   ├── chat.py           # Chat endpoints
+│   │   │   ├── reasoning.py      # Reasoning endpoints
+│   │   │   ├── rag.py            # RAG endpoints
+│   │   │   ├── endpoints/
+│   │   │   │   └── tasks.py      # Background task API
+│   │   │   └── router.py         # API router
+│   │   ├── routes/
+│   │   │   ├── conversations.py  # Conversation management
+│   │   │   ├── knowledge_base.py # Knowledge base routes
+│   │   │   ├── memory.py         # Memory routes
+│   │   │   └── background_jobs.py
+│   │   ├── websocket/
+│   │   │   ├── handlers/         # WebSocket handlers
+│   │   │   ├── connection_manager.py
+│   │   │   └── service.py
+│   │   ├── health.py             # Health check
+│   │   └── grpc.py               # gRPC endpoints
 │   ├── core/
-│   │   └── startup.py            # Service initialization
-│   ├── langchain/
+│   │   ├── config.py             # Configuration
+│   │   ├── database.py           # Database connections
+│   │   ├── redis_client.py       # Redis client
+│   │   ├── mongodb_client_manager.py
+│   │   ├── startup.py            # Service initialization
+│   │   ├── circuit_breaker.py    # Resilience patterns
+│   │   └── metrics.py            # Prometheus metrics
+│   ├── langchain/                # LangChain integration
 │   │   ├── llm_factory.py        # Model initialization
 │   │   ├── tools.py              # Agent tools (5 tools)
 │   │   ├── prompts.py            # Prompt templates
 │   │   ├── memory.py             # Conversation memory
 │   │   └── rag_chain.py          # RAG implementation
-│   ├── langgraph/
+│   ├── langgraph/                # LangGraph workflow
 │   │   ├── agent_graph.py        # Agent state machine
 │   │   ├── nodes.py              # Graph nodes
 │   │   └── state.py              # State definition
-│   ├── services/
+│   ├── services/                 # Business logic services
 │   │   ├── kafka_service.py      # Event streaming
 │   │   ├── background_task_service.py  # Async tasks
 │   │   ├── rbac_service.py       # Access control
 │   │   ├── chart_service.py      # Visualizations
 │   │   ├── langchain_chat_service.py
-│   │   └── api_gateway_client.py
-│   └── rag/
-│       └── engine.py             # RAG engine
+│   │   ├── chat_service.py       # Chat service
+│   │   ├── conversation_service.py
+│   │   ├── memory_service.py
+│   │   ├── knowledge_base_service.py
+│   │   ├── reasoning_engine.py   # Reasoning logic
+│   │   ├── api_gateway_client.py # ERP integration
+│   │   ├── erp_data_service.py   # ERP data access
+│   │   ├── auth_service.py       # Authentication
+│   │   ├── jwt_service.py        # JWT handling
+│   │   └── llm_service.py        # LLM providers
+│   ├── rag/                      # RAG system
+│   │   ├── engine.py             # RAG engine
+│   │   ├── vector_store.py       # Qdrant integration
+│   │   ├── embeddings.py         # HuggingFace embeddings
+│   │   ├── document_processor.py # Document processing
+│   │   └── kafka_integration.py  # Kafka for RAG
+│   ├── tools/                    # Agent tools
+│   │   ├── rag_tools.py          # RAG tools
+│   │   ├── api_call_tool.py      # API tools
+│   │   └── erp_tools.py          # ERP tools
+│   ├── models/                   # Data models
+│   │   ├── chat.py               # Chat models
+│   │   ├── api_models.py         # API models
+│   │   └── mongodb_models.py     # MongoDB models
+│   ├── middleware/               # Middleware
+│   │   ├── auth.py               # Auth middleware
+│   │   ├── logging.py            # Logging middleware
+│   │   └── rate_limit.py         # Rate limiting
+│   └── main.py                   # Application entry
 ├── scripts/
-│   └── populate_knowledge_base.py
+│   ├── populate_knowledge_base.py
+│   ├── initialize_knowledge_base.py
+│   └── init_db.py
+├── tests/
+│   ├── api/                      # API tests
+│   ├── rag/                      # RAG tests
+│   └── unit/                     # Unit tests
+├── docs/                         # Documentation
+├── knowledge_source/             # Knowledge base source
+├── proto/                        # Protocol buffers
+├── config/                       # Configuration files
 ├── requirements.txt
 ├── .env.example
+├── docker-compose.yml
+├── Dockerfile
+├── main.py                       # Service entry point
 ├── README.md
 └── ADVANCED_FEATURES_IMPLEMENTATION.md
 ```
@@ -844,7 +912,3 @@ curl http://localhost:8003/api/v1/tasks/{task_id}
 - Verify widget JSON format in browser console
 
 ---
-
-**Built with ❤️ using LangChain & LangGraph**
-
-**Key Technologies:** FastAPI • LangChain • LangGraph • Kafka • Redis • MongoDB • Qdrant • WebSocket • Plotly • Pandas
