@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class Role(str, Enum):
     """User roles"""
     ADMIN = "admin"
+    ORG_ADMIN = "org_admin"
     MANAGER = "manager"
     USER = "user"
     VIEWER = "viewer"
@@ -25,6 +26,7 @@ class Permission(str, Enum):
     READ_ALL_DATA = "read_all_data"
     READ_OWN_DATA = "read_own_data"
     READ_DEPARTMENT_DATA = "read_department_data"
+    READ_ORG_DATA = "read_org_data"
     
     # Operations
     CREATE_RECORDS = "create_records"
@@ -41,6 +43,10 @@ class Permission(str, Enum):
     CREATE_BACKGROUND_TASKS = "create_background_tasks"
     VIEW_FORECASTS = "view_forecasts"
     
+    # Organization management
+    MANAGE_ORGANIZATION = "manage_organization"
+    VIEW_ORG_LOGS = "view_org_logs"
+    
     # System
     MANAGE_USERS = "manage_users"
     SYSTEM_COMMANDS = "system_commands"
@@ -50,6 +56,7 @@ class Permission(str, Enum):
 ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
     Role.ADMIN: {
         Permission.READ_ALL_DATA,
+        Permission.READ_ORG_DATA,
         Permission.CREATE_RECORDS,
         Permission.UPDATE_RECORDS,
         Permission.DELETE_RECORDS,
@@ -59,8 +66,25 @@ ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
         Permission.USE_AI_CHAT,
         Permission.CREATE_BACKGROUND_TASKS,
         Permission.VIEW_FORECASTS,
+        Permission.MANAGE_ORGANIZATION,
+        Permission.VIEW_ORG_LOGS,
         Permission.MANAGE_USERS,
         Permission.SYSTEM_COMMANDS,
+    },
+    Role.ORG_ADMIN: {
+        Permission.READ_ORG_DATA,
+        Permission.CREATE_RECORDS,
+        Permission.UPDATE_RECORDS,
+        Permission.DELETE_RECORDS,
+        Permission.GENERATE_REPORTS,
+        Permission.VIEW_ANALYTICS,
+        Permission.EXPORT_DATA,
+        Permission.USE_AI_CHAT,
+        Permission.CREATE_BACKGROUND_TASKS,
+        Permission.VIEW_FORECASTS,
+        Permission.MANAGE_ORGANIZATION,
+        Permission.VIEW_ORG_LOGS,
+        Permission.MANAGE_USERS,
     },
     Role.MANAGER: {
         Permission.READ_DEPARTMENT_DATA,

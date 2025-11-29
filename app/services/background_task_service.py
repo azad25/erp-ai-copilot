@@ -67,13 +67,14 @@ class BackgroundTaskService:
         self.task_handlers[task_type] = handler
         
     async def create_task(self, task_type: TaskType, user_id: str, 
-                         parameters: Dict[str, Any]) -> str:
+                         organization_id: str, parameters: Dict[str, Any]) -> str:
         """
-        Create a new background task
+        Create a new background task with org isolation
         
         Args:
             task_type: Type of task to create
             user_id: User who created the task
+            organization_id: Organization ID for isolation
             parameters: Task parameters
             
         Returns:
@@ -85,6 +86,7 @@ class BackgroundTaskService:
             'task_id': task_id,
             'task_type': task_type,
             'user_id': user_id,
+            'organization_id': organization_id,  # Add org_id
             'parameters': parameters,
             'status': TaskStatus.PENDING,
             'created_at': datetime.utcnow().isoformat(),
@@ -104,17 +106,30 @@ class BackgroundTaskService:
         logger.info(f"Created background task: {task_id} ({task_type})")
         return task_id
     
-    async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get task status and result"""
+    async def get_task_status(self, task_id: str, organization_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get task status and result with org validation"""
         if not self.redis_client:
             return None
+        
+        # If org_id provided, use it; otherwise try to extract from context
+        if organization_id:
+            task_key = f"task:{organization_id}:{task_id}"
+        else:
+            # Try default for backward compatibility (should be removed in production)
+            task_key = f"task:default:{task_id}"
             
-        task_key = f"task:{task_id}"
         task_data = await self.redis_client.get(task_key)
         
         if task_data:
             import json
-            return json.loads(task_data)
+            task = json.loads(task_data)
+            
+            # Validate org_id if provided
+            if organization_id and task.get('organization_id') != organization_id:
+                logger.warning(f"Org mismatch for task {task_id}: expected {organization_id}, got {task.get('organization_id')}")
+                return None
+                
+            return task
         return None
     
     async def cancel_task(self, task_id: str) -> bool:
@@ -141,12 +156,14 @@ class BackgroundTaskService:
         return True
     
     async def _store_task(self, task_id: str, task_data: Dict[str, Any]):
-        """Store task data in Redis"""
+        """Store task data in Redis with org isolation"""
         if not self.redis_client:
             return
             
         import json
-        task_key = f"task:{task_id}"
+        # Include org_id in key for isolation
+        org_id = task_data.get('organization_id', 'default')
+        task_key = f"task:{org_id}:{task_id}"
         await self.redis_client.setex(
             task_key,
             86400,  # 24 hours TTL

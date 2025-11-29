@@ -26,22 +26,49 @@ def get_qdrant_client() -> QdrantClient:
     )
 
 
-def get_rag_retriever(
-    collection_name: str = "erp_documents",
-    search_kwargs: Optional[Dict[str, Any]] = None
-):
+def get_org_collection_name(organization_id: str) -> str:
     """
-    Get RAG retriever for document search
+    Get organization-specific collection name
     
     Args:
-        collection_name: Qdrant collection name
+        organization_id: Organization ID
+        
+    Returns:
+        Collection name in format: org_{org_id}_docs
+    """
+    safe_org_id = organization_id.replace("-", "_").replace(".", "_")
+    return f"org_{safe_org_id}_docs"
+
+
+def get_rag_retriever(
+    collection_name: str = "erp_documents",
+    organization_id: Optional[str] = None,
+    search_kwargs: Optional[Dict[str, Any]] = None,
+    filter_dict: Optional[Dict[str, Any]] = None
+):
+    """
+    Get RAG retriever for document search with organization isolation
+    
+    Args:
+        collection_name: Qdrant collection name (ignored if organization_id provided)
+        organization_id: Organization ID for org-specific collection
         search_kwargs: Search parameters (k, score_threshold, etc.)
+        filter_dict: Additional filters for search
         
     Returns:
         LangChain retriever
     """
     embeddings = get_embeddings()
     qdrant_client = get_qdrant_client()
+    
+    # Use org-specific collection if organization_id provided
+    if organization_id:
+        collection_name = get_org_collection_name(organization_id)
+        
+        # Add organization_id to filter
+        if filter_dict is None:
+            filter_dict = {}
+        filter_dict["organization_id"] = organization_id
     
     vectorstore = LangChainQdrant(
         client=qdrant_client,
@@ -50,6 +77,10 @@ def get_rag_retriever(
     )
     
     search_kwargs = search_kwargs or {"k": 5, "score_threshold": 0.7}
+    
+    # Add filter to search kwargs if provided
+    if filter_dict:
+        search_kwargs["filter"] = filter_dict
     
     return vectorstore.as_retriever(
         search_type="similarity_score_threshold",
@@ -60,14 +91,16 @@ def get_rag_retriever(
 def create_rag_chain(
     llm=None,
     collection_name: str = "erp_documents",
+    organization_id: Optional[str] = None,
     return_source_documents: bool = True
 ):
     """
-    Create RAG chain for question answering
+    Create RAG chain for question answering with organization isolation
     
     Args:
         llm: LangChain LLM instance (optional, creates default)
-        collection_name: Qdrant collection name
+        collection_name: Qdrant collection name (ignored if organization_id provided)
+        organization_id: Organization ID for org-specific collection
         return_source_documents: Whether to return source documents
         
     Returns:
@@ -76,7 +109,10 @@ def create_rag_chain(
     if llm is None:
         llm = get_llm()
     
-    retriever = get_rag_retriever(collection_name)
+    retriever = get_rag_retriever(
+        collection_name=collection_name,
+        organization_id=organization_id
+    )
     
     # Custom prompt template
     prompt_template = """You are an intelligent ERP system assistant with access to comprehensive documentation.
@@ -114,14 +150,16 @@ Answer:"""
 async def search_documents(
     query: str,
     collection_name: str = "erp_documents",
+    organization_id: Optional[str] = None,
     k: int = 5
 ) -> List[Document]:
     """
-    Search documents using RAG retriever
+    Search documents using RAG retriever with organization isolation
     
     Args:
         query: Search query
-        collection_name: Qdrant collection
+        collection_name: Qdrant collection (ignored if organization_id provided)
+        organization_id: Organization ID for org-specific search
         k: Number of results
         
     Returns:
@@ -129,6 +167,7 @@ async def search_documents(
     """
     retriever = get_rag_retriever(
         collection_name=collection_name,
+        organization_id=organization_id,
         search_kwargs={"k": k}
     )
     
