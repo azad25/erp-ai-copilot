@@ -423,3 +423,383 @@ def get_erp_tools() -> List[Tool]:
     ]
     
     return tools
+
+
+# Database Tools
+
+async def query_postgres_tool(
+    query: str,
+    operation_type: str = "select",
+    table_name: Optional[str] = None
+) -> str:
+    """Execute PostgreSQL query (admin only)"""
+    try:
+        from app.services.database_service import database_service
+        from app.core.user_context import get_current_user_role
+        from app.services.rbac_service import rbac_service, Permission
+        import json
+        
+        # Check if user has permission (admin only)
+        requester_role = get_current_user_role() or "user"
+        if not rbac_service.has_permission(requester_role, Permission.READ_ALL_DATA):
+            return "Error: Only administrators can access database directly"
+        
+        # Determine fetch mode based on operation
+        if operation_type.lower() == "select":
+            fetch_mode = "all"
+        elif operation_type.lower() in ["insert", "update", "delete"]:
+            fetch_mode = "none"
+        else:
+            fetch_mode = "all"
+        
+        # Execute query
+        success, result, message = await database_service.execute_postgres_query(
+            query=query,
+            fetch_mode=fetch_mode
+        )
+        
+        if not success:
+            return f"Database query failed: {message}"
+        
+        # Format result
+        if operation_type.lower() == "select":
+            if not result:
+                return "Query executed successfully but returned no results."
+            
+            # Format as table
+            response = f"Query executed successfully. {message}\n\n"
+            response += json.dumps(result, indent=2, default=str)
+            return response
+        else:
+            return f"Query executed successfully: {message}"
+            
+    except Exception as e:
+        return f"Error executing PostgreSQL query: {str(e)}"
+
+
+async def query_mongodb_tool(
+    collection: str,
+    operation: str,
+    query: Optional[Dict] = None,
+    data: Optional[Dict] = None,
+    limit: int = 10
+) -> str:
+    """Execute MongoDB query (admin only)"""
+    try:
+        from app.services.database_service import database_service
+        from app.core.user_context import get_current_user_role
+        from app.services.rbac_service import rbac_service, Permission
+        import json
+        
+        # Check if user has permission (admin only)
+        requester_role = get_current_user_role() or "user"
+        if not rbac_service.has_permission(requester_role, Permission.READ_ALL_DATA):
+            return "Error: Only administrators can access database directly"
+        
+        # Execute query
+        success, result, message = await database_service.execute_mongodb_query(
+            collection_name=collection,
+            operation=operation,
+            query=query or {},
+            data=data,
+            limit=limit
+        )
+        
+        if not success:
+            return f"MongoDB query failed: {message}"
+        
+        # Format result
+        response = f"Query executed successfully. {message}\n\n"
+        if result:
+            response += json.dumps(result, indent=2, default=str)
+        
+        return response
+            
+    except Exception as e:
+        return f"Error executing MongoDB query: {str(e)}"
+
+
+async def list_database_tables_tool(database_type: str = "postgres") -> str:
+    """List tables/collections in database (admin only)"""
+    try:
+        from app.services.database_service import database_service
+        from app.core.user_context import get_current_user_role
+        from app.services.rbac_service import rbac_service, Permission
+        
+        # Check if user has permission (admin only)
+        requester_role = get_current_user_role() or "user"
+        if not rbac_service.has_permission(requester_role, Permission.READ_ALL_DATA):
+            return "Error: Only administrators can access database directly"
+        
+        if database_type.lower() == "postgres":
+            tables = await database_service.get_postgres_tables()
+            if not tables:
+                return "No tables found in PostgreSQL database."
+            
+            response = f"PostgreSQL Tables ({len(tables)}):\n\n"
+            for i, table in enumerate(tables, 1):
+                response += f"{i}. {table}\n"
+            return response
+            
+        elif database_type.lower() == "mongodb":
+            collections = await database_service.get_mongodb_collections()
+            if not collections:
+                return "No collections found in MongoDB database."
+            
+            response = f"MongoDB Collections ({len(collections)}):\n\n"
+            for i, collection in enumerate(collections, 1):
+                response += f"{i}. {collection}\n"
+            return response
+        else:
+            return f"Unknown database type: {database_type}. Use 'postgres' or 'mongodb'."
+            
+    except Exception as e:
+        return f"Error listing database tables: {str(e)}"
+
+
+async def get_table_schema_tool(table_name: str, database_type: str = "postgres") -> str:
+    """Get table schema information (admin only)"""
+    try:
+        from app.services.database_service import database_service
+        from app.core.user_context import get_current_user_role
+        from app.services.rbac_service import rbac_service, Permission
+        import json
+        
+        # Check if user has permission (admin only)
+        requester_role = get_current_user_role() or "user"
+        if not rbac_service.has_permission(requester_role, Permission.READ_ALL_DATA):
+            return "Error: Only administrators can access database directly"
+        
+        if database_type.lower() == "postgres":
+            schema = await database_service.get_postgres_table_schema(table_name)
+            if not schema:
+                return f"Table '{table_name}' not found or has no columns."
+            
+            response = f"Schema for table '{table_name}':\n\n"
+            for col in schema:
+                nullable = "NULL" if col['is_nullable'] == 'YES' else "NOT NULL"
+                default = f" DEFAULT {col['column_default']}" if col['column_default'] else ""
+                response += f"- {col['column_name']}: {col['data_type']} {nullable}{default}\n"
+            return response
+            
+        elif database_type.lower() == "mongodb":
+            stats = await database_service.get_mongodb_collection_stats(table_name)
+            if not stats:
+                return f"Collection '{table_name}' not found."
+            
+            response = f"Statistics for collection '{table_name}':\n\n"
+            response += f"- Document Count: {stats.get('count', 0):,}\n"
+            response += f"- Size: {stats.get('size', 0):,} bytes\n"
+            response += f"- Average Object Size: {stats.get('avgObjSize', 0):,} bytes\n"
+            response += f"- Storage Size: {stats.get('storageSize', 0):,} bytes\n"
+            response += f"- Indexes: {stats.get('indexes', 0)}\n"
+            return response
+        else:
+            return f"Unknown database type: {database_type}. Use 'postgres' or 'mongodb'."
+            
+    except Exception as e:
+        return f"Error getting table schema: {str(e)}"
+
+
+async def generate_dummy_data_tool(
+    data_type: str,
+    count: int = 10,
+    organization_id: Optional[str] = None,
+    insert_to_db: bool = False,
+    table_name: Optional[str] = None
+) -> str:
+    """Generate dummy data (admin only)"""
+    try:
+        from app.utils.data_factory import DataFactory, DataType
+        from app.services.database_service import database_service
+        from app.core.user_context import get_current_user_role, get_current_organization_id
+        from app.services.rbac_service import rbac_service, Permission
+        import json
+        
+        # Check if user has permission (admin only)
+        requester_role = get_current_user_role() or "user"
+        if not rbac_service.has_permission(requester_role, Permission.READ_ALL_DATA):
+            return "Error: Only administrators can generate dummy data"
+        
+        # Use current org if not specified
+        if not organization_id:
+            organization_id = get_current_organization_id() or "default"
+        
+        # Validate count
+        if count > 100:
+            return "Error: Maximum 100 records can be generated at once"
+        
+        # Generate data
+        try:
+            data_type_enum = DataType(data_type.lower())
+        except ValueError:
+            return f"Error: Unknown data type '{data_type}'. Available types: user, organization, product, customer, employee, sales"
+        
+        data = DataFactory.generate_batch(data_type_enum, count, organization_id)
+        
+        # Insert to database if requested
+        if insert_to_db:
+            if not table_name:
+                return "Error: table_name is required when insert_to_db is True"
+            
+            # For PostgreSQL, we need to construct INSERT statements
+            # For MongoDB, we can insert directly
+            if table_name.startswith("mongo:"):
+                # MongoDB collection
+                collection_name = table_name.replace("mongo:", "")
+                success, result, message = await database_service.execute_mongodb_query(
+                    collection_name=collection_name,
+                    operation="insert_many",
+                    data=data
+                )
+                
+                if success:
+                    return f"Successfully generated and inserted {count} {data_type} records into MongoDB collection '{collection_name}'.\n\nSample data:\n{json.dumps(data[:2], indent=2, default=str)}"
+                else:
+                    return f"Error inserting data: {message}"
+            else:
+                # PostgreSQL table - return data for manual insertion
+                return f"Generated {count} {data_type} records. Please use the data below to construct INSERT statements:\n\n{json.dumps(data, indent=2, default=str)}\n\nNote: Automatic PostgreSQL insertion requires table schema mapping."
+        else:
+            # Just return the generated data
+            return f"Generated {count} {data_type} records:\n\n{json.dumps(data, indent=2, default=str)}"
+            
+    except Exception as e:
+        return f"Error generating dummy data: {str(e)}"
+
+
+class PostgresQueryInput(BaseModel):
+    """Input for PostgreSQL query tool"""
+    query: str = Field(description="SQL query to execute")
+    operation_type: str = Field(default="select", description="Operation type: select, insert, update, delete")
+    table_name: Optional[str] = Field(default=None, description="Table name (optional, for context)")
+
+
+class MongoDBQueryInput(BaseModel):
+    """Input for MongoDB query tool"""
+    collection: str = Field(description="Collection name")
+    operation: str = Field(description="Operation: find, find_one, insert_one, insert_many, update_one, update_many, delete_one, delete_many, count")
+    query: Optional[Dict] = Field(default=None, description="Query filter (for find/update/delete operations)")
+    data: Optional[Dict] = Field(default=None, description="Data to insert/update")
+    limit: int = Field(default=10, description="Limit for find operations")
+
+
+class ListTablesInput(BaseModel):
+    """Input for list tables tool"""
+    database_type: str = Field(default="postgres", description="Database type: postgres or mongodb")
+
+
+class TableSchemaInput(BaseModel):
+    """Input for table schema tool"""
+    table_name: str = Field(description="Table/collection name")
+    database_type: str = Field(default="postgres", description="Database type: postgres or mongodb")
+
+
+class DummyDataInput(BaseModel):
+    """Input for dummy data generation tool"""
+    data_type: str = Field(description="Data type: user, organization, product, customer, employee, sales")
+    count: int = Field(default=10, description="Number of records to generate (max 100)")
+    organization_id: Optional[str] = Field(default=None, description="Organization ID (optional)")
+    insert_to_db: bool = Field(default=False, description="Whether to insert data into database")
+    table_name: Optional[str] = Field(default=None, description="Table/collection name (required if insert_to_db=True). Use 'mongo:collection_name' for MongoDB")
+
+
+def get_database_tools() -> List[Tool]:
+    """Get database access tools (admin only)"""
+    return [
+        StructuredTool.from_function(
+            coroutine=query_postgres_tool,
+            name="query_postgres",
+            description="""Execute PostgreSQL queries (ADMIN ONLY).
+            Use this when admin asks to:
+            - "Show me the last entry in users table"
+            - "Show last 10 users"
+            - "How many users does this org have?"
+            - "Show recent orders"
+            - "Get all active customers"
+            
+            Examples:
+            - SELECT * FROM users ORDER BY created_at DESC LIMIT 10
+            - SELECT COUNT(*) FROM users WHERE organization_id = 'org_123'
+            - SELECT * FROM orders WHERE status = 'pending'
+            
+            IMPORTANT: Only SELECT queries are recommended. Use with caution for INSERT/UPDATE/DELETE.
+            """,
+            args_schema=PostgresQueryInput
+        ),
+        
+        StructuredTool.from_function(
+            coroutine=query_mongodb_tool,
+            name="query_mongodb",
+            description="""Execute MongoDB queries (ADMIN ONLY).
+            Use this when admin asks to:
+            - "Show me recent logs"
+            - "Find documents in collection X"
+            - "Count documents matching criteria"
+            - "Show analytics data"
+            
+            Operations: find, find_one, insert_one, insert_many, update_one, update_many, delete_one, delete_many, count
+            
+            Examples:
+            - operation='find', collection='logs', query={'level': 'error'}, limit=10
+            - operation='count', collection='users', query={'status': 'active'}
+            """,
+            args_schema=MongoDBQueryInput
+        ),
+        
+        StructuredTool.from_function(
+            coroutine=list_database_tables_tool,
+            name="list_database_tables",
+            description="""List all tables/collections in database (ADMIN ONLY).
+            Use this when admin asks:
+            - "What tables are in the database?"
+            - "List all collections"
+            - "Show me available tables"
+            
+            Supports both PostgreSQL and MongoDB.
+            """,
+            args_schema=ListTablesInput
+        ),
+        
+        StructuredTool.from_function(
+            coroutine=get_table_schema_tool,
+            name="get_table_schema",
+            description="""Get table/collection schema information (ADMIN ONLY).
+            Use this when admin asks:
+            - "What columns does the users table have?"
+            - "Show me the schema for orders table"
+            - "What fields are in the products collection?"
+            
+            Returns column names, data types, and constraints for PostgreSQL.
+            Returns statistics for MongoDB collections.
+            """,
+            args_schema=TableSchemaInput
+        ),
+        
+        StructuredTool.from_function(
+            coroutine=generate_dummy_data_tool,
+            name="generate_dummy_data",
+            description="""Generate realistic dummy data (ADMIN ONLY).
+            Use this when admin asks to:
+            - "Generate 10 dummy users"
+            - "Create test data for products"
+            - "Add an organization with 10 users"
+            - "Fill the database with sample sales data"
+            
+            Data types: user, organization, product, customer, employee, sales
+            
+            Can optionally insert directly into MongoDB collections.
+            For PostgreSQL, returns data that can be used to construct INSERT statements.
+            
+            Examples:
+            - Generate 10 users: data_type='user', count=10
+            - Generate and insert to MongoDB: data_type='user', count=10, insert_to_db=True, table_name='mongo:users'
+            """,
+            args_schema=DummyDataInput
+        ),
+    ]
+
+
+def get_all_tools() -> List[Tool]:
+    """Get all tools including ERP and database tools"""
+    return get_erp_tools() + get_database_tools()

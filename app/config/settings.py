@@ -28,6 +28,19 @@ class DatabaseSettings(BaseSettings):
         env_prefix = "DB_"
 
 
+class PostgresSettings(BaseSettings):
+    """PostgreSQL configuration for direct database access."""
+    
+    host: str = Field(default="postgres", env="POSTGRES_HOST")
+    port: int = Field(default=5432, env="POSTGRES_PORT")
+    db: str = Field(default="erp_system", env="POSTGRES_DB")
+    user: str = Field(default="postgres", env="POSTGRES_USER")
+    password: str = Field(default="postgres", env="POSTGRES_PASSWORD")
+    
+    class Config:
+        env_prefix = "POSTGRES_"
+
+
 class RedisSettings(BaseSettings):
     """Redis configuration settings."""
     
@@ -307,6 +320,7 @@ class Settings(BaseSettings):
     
     # Database configurations
     database: DatabaseSettings = DatabaseSettings()
+    postgres: PostgresSettings = PostgresSettings()
     redis: RedisSettings = RedisSettings()
     mongodb: MongoDBSettings = MongoDBSettings()
     qdrant: QdrantSettings = QdrantSettings()
