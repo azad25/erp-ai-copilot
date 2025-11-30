@@ -41,6 +41,11 @@ try:
 except ImportError:
     ollama = None
 
+try:
+    from google import genai
+except ImportError:
+    genai = None
+
 from app.core.exceptions import AIModelError
 
 
@@ -592,43 +597,47 @@ class HuggingFaceProvider(BaseLLMProvider):
 
 
 class GeminiProvider(BaseLLMProvider):
-    """Gemini LLM Provider."""
+    """Gemini LLM Provider using google-genai SDK."""
 
     def __init__(self, api_key: str = None, base_url: str = None):
         """Initialize Gemini provider.
         
         Args:
-            api_key: Gemini API key
-            base_url: Base URL for Gemini API
+            api_key: Gemini API key (GEMINI_API_KEY environment variable)
+            base_url: Not used for Gemini (kept for interface compatibility)
         """
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.base_url = base_url or "https://generativelanguage.googleapis.com/v1beta/models"
-        self.default_model = "gemini-2.0-flash"  # Default to a known working model
+        self.client = None
+        self.default_model = "gemini-2.5-flash"
         self.logger = structlog.get_logger("gemini_provider")
         
-        if not self.api_key:
+        if self.api_key and genai:
+            try:
+                # Set API key in environment for genai client
+                os.environ["GEMINI_API_KEY"] = self.api_key
+                # Initialize the client (it will automatically use GEMINI_API_KEY from env)
+                self.client = genai.Client()
+                self.logger.info("Gemini provider initialized with google-genai SDK")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Gemini client: {str(e)}")
+        elif not self.api_key:
             self.logger.warning("GEMINI_API_KEY not found in environment variables")
+        elif not genai:
+            self.logger.warning("google-genai library not available")
 
     def validate_config(self) -> bool:
         """Validate that the provider is properly configured."""
         if not self.api_key:
             self.logger.warning("Gemini API key not configured")
             return False
+        if not genai:
+            self.logger.warning("google-genai library not available")
+            return False
         return True
 
     def get_available_models(self) -> List[str]:
         """Get list of available models for this provider."""
-        return ["gemini-2.0-flash", "gemini-2.5-pro"]
-
-    def _get_model_url(self, model: str) -> str:
-        """Get the API URL for the specified model."""
-        model_map = {
-            "gemini": "gemini-2.0-flash",
-            "gemini2.0:flash": "gemini-2.0-flash",
-            "gemini2.5:pro": "gemini-2.5-pro"
-        }
-        model_name = model_map.get(model, model)
-        return f"{self.base_url}/{model_name}:generateContent"
+        return ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         """Generate a response from the LLM.
@@ -642,77 +651,70 @@ class GeminiProvider(BaseLLMProvider):
         Raises:
             AIModelError: If there's an error generating the response
         """
-        if not self.validate_config():
-            raise AIModelError("gemini", request.model, "Gemini provider is not properly configured")
+        if not self.client:
+            raise AIModelError("gemini", request.model, "Gemini client not initialized")
             
         model = request.model or self.default_model
-        url = self._get_model_url(model)
-        
-        # Format messages for Gemini API
-        prompt = ""
-        system_instruction = None
-        
-        if request.system_prompt:
-            system_instruction = request.system_prompt
-            
-        for msg in request.messages:
-            if msg.role == "system":
-                system_instruction = msg.content
-            elif msg.role == "user":
-                prompt += f"\n\n{msg.content}"
-            elif msg.role == "assistant":
-                prompt += f"\n\nAssistant: {msg.content}"
-            else:
-                prompt += f"\n\n{msg.role}: {msg.content}"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "X-goog-api-key": self.api_key
-        }
-        
-        # Prepare the request payload
-        payload = {
-            "contents": [{"parts": [{"text": prompt.strip()}]}],
-            "generationConfig": {
-                "temperature": request.temperature,
-                "topP": 0.95,
-                "topK": 40,
-                "maxOutputTokens": request.max_tokens,
-            }
-        }
-        
-        # Add system instruction if provided
-        if system_instruction:
-            payload["systemInstruction"] = {
-                "parts": [{"text": system_instruction}]
-            }
         
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            # Build the content string from messages
+            contents = []
+            system_instruction = None
+            
+            # Extract system prompt
+            if request.system_prompt:
+                system_instruction = request.system_prompt
+            
+            # Process messages
+            for msg in request.messages:
+                if msg.role == "system":
+                    system_instruction = msg.content
+                elif msg.role == "user":
+                    contents.append(msg.content)
+                elif msg.role == "assistant":
+                    # For multi-turn conversations, we'd need to structure this differently
+                    # For now, append as context
+                    contents.append(f"Assistant: {msg.content}")
+            
+            # Combine all content
+            combined_content = "\n\n".join(contents)
+            
+            # Add system instruction as prefix if provided
+            if system_instruction:
+                combined_content = f"{system_instruction}\n\n{combined_content}"
+            
+            # Generate content using the new SDK
+            response = self.client.models.generate_content(
+                model=model,
+                contents=combined_content,
+                config={
+                    "temperature": request.temperature,
+                    "max_output_tokens": request.max_tokens,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                }
+            )
+            
+            # Extract the response text
+            content = response.text
+            
+            # Estimate token usage (approximate)
+            tokens_used = len(content.split()) + len(combined_content.split())
+            
+            return LLMResponse(
+                content=content,
+                model=model,
+                tokens_used=tokens_used,
+                finish_reason="stop",
+                metadata={"provider": "gemini"}
+            )
                 
-                if "candidates" not in data or not data["candidates"]:
-                    raise AIModelError("gemini", model, "No candidates in response")
-                
-                content = data["candidates"][0]["content"]["parts"][0]["text"]
-                
-                return LLMResponse(
-                    content=content,
-                    model=model,
-                    tokens_used=len(content.split()),  # Approximate token count
-                    finish_reason="stop",
-                    metadata={"provider": "gemini"}
-                )
-                
-        except httpx.HTTPStatusError as e:
-            error_msg = f"API request failed with status {e.response.status_code}: {e.response.text}"
-            raise AIModelError("gemini", model, error_msg) from e
         except Exception as e:
-            raise AIModelError("gemini", model, str(e)) from e
+            error_msg = str(e)
+            self.logger.error(f"Gemini API error: {error_msg}", model=model)
+            raise AIModelError("gemini", model, f"Gemini API error: {error_msg}") from e
     
-    async def generate_stream(self, request: LLMRequest):
+    async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
         """Generate a streaming response from the LLM.
         
         Args:
@@ -724,23 +726,57 @@ class GeminiProvider(BaseLLMProvider):
         Raises:
             AIModelError: If there's an error generating the response
         """
-        if not self.validate_config():
-            raise AIModelError("gemini", request.model, "Gemini provider is not properly configured")
+        if not self.client:
+            raise AIModelError("gemini", request.model, "Gemini client not initialized")
             
-        # Gemini's REST API doesn't support streaming, so we'll simulate it
+        model = request.model or self.default_model
+        
         try:
-            response = await self.generate(request)
-            # Simulate streaming by yielding chunks of the response
-            chunk_size = 10  # words per chunk
-            words = response.content.split()
-            for i in range(0, len(words), chunk_size):
-                chunk = " ".join(words[i:i+chunk_size])
-                if i + chunk_size < len(words):
-                    chunk += " "  # Add space if not the last chunk
-                yield chunk
-                await asyncio.sleep(0.05)  # Small delay between chunks
+            # Build the content string from messages
+            contents = []
+            system_instruction = None
+            
+            # Extract system prompt
+            if request.system_prompt:
+                system_instruction = request.system_prompt
+            
+            # Process messages
+            for msg in request.messages:
+                if msg.role == "system":
+                    system_instruction = msg.content
+                elif msg.role == "user":
+                    contents.append(msg.content)
+                elif msg.role == "assistant":
+                    contents.append(f"Assistant: {msg.content}")
+            
+            # Combine all content
+            combined_content = "\n\n".join(contents)
+            
+            # Add system instruction as prefix if provided
+            if system_instruction:
+                combined_content = f"{system_instruction}\n\n{combined_content}"
+            
+            # Generate content with streaming
+            response = self.client.models.generate_content_stream(
+                model=model,
+                contents=combined_content,
+                config={
+                    "temperature": request.temperature,
+                    "max_output_tokens": request.max_tokens,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                }
+            )
+            
+            # Stream the response chunks
+            for chunk in response:
+                if hasattr(chunk, 'text') and chunk.text:
+                    yield chunk.text
+                    
         except Exception as e:
-            raise AIModelError("gemini", request.model, f"Streaming error: {str(e)}") from e
+            error_msg = str(e)
+            self.logger.error(f"Gemini streaming error: {error_msg}", model=model)
+            raise AIModelError("gemini", model, f"Gemini streaming error: {error_msg}") from e
 
 
 class LLMService:
@@ -901,7 +937,7 @@ class LLMService:
         models = {
             "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
             "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
-            "gemini": ["gemini2.0:flash", "gemini2.5:pro"],
+            "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
             "groq": [
                 "llama-3.3-70b-versatile",
                 "llama-3.3-70b-specdec",
@@ -979,8 +1015,9 @@ class LLMService:
             "phi3.5": "ollama",
             
             # Gemini models
-            "gemini2.0:flash": "gemini",
-            "gemini2.5:pro": "gemini",
+            "gemini-2.5-flash": "gemini",
+            "gemini-2.5-pro": "gemini",
+            "gemini-2.0-flash": "gemini",
             "gemini": "gemini",
         }
         

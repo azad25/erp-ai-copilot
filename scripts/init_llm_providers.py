@@ -28,8 +28,8 @@ DEFAULT_PROVIDERS = [
         "is_enabled": True,
         "is_default": True,
         "priority": 100,
-        "available_models": ["gemini2.0:flash", "gemini2.5:pro"],
-        "default_model": "gemini2.0:flash",
+        "available_models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+        "default_model": "gemini-2.5-flash",
         "config": {
             "description": "Google's Gemini AI models with fast response times",
             "requires_api_key": True,
