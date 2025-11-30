@@ -11,6 +11,7 @@ class MessageType(str, Enum):
     CHAT = "chat_message"
     TYPING = "typing_indicator"
     PING = "ping"
+    PONG = "pong"
     STATUS = "status"
 
 
@@ -52,6 +53,16 @@ class WebSocketPingMessage(WebSocketMessage):
     timestamp: Optional[float] = Field(
         None,
         description="Timestamp when ping was sent"
+    )
+
+
+class WebSocketPongMessage(WebSocketMessage):
+    """Pong response message for connection keep-alive."""
+    type: Literal[MessageType.PONG] = MessageType.PONG
+    message: str = Field(default="pong", description="Pong message")
+    data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional pong data (e.g., latency)"
     )
 
 

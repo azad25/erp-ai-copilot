@@ -40,12 +40,18 @@ class PingHandler(BaseMessageHandler):
                 timestamp = message['timestamp']
             
             if timestamp:
-                latency_ms = int((time.time() - timestamp) * 1000)
+                # Convert timestamp to float if it's a string
+                try:
+                    timestamp_float = float(timestamp)
+                    latency_ms = int((time.time() - timestamp_float) * 1000)
+                except (ValueError, TypeError):
+                    logger.warning("Invalid timestamp format", timestamp=timestamp)
+                    latency_ms = None
             
             # Send pong response
-            pong = WebSocketStatusMessage(
+            from app.api.websocket.models.messages import WebSocketPongMessage
+            pong = WebSocketPongMessage(
                 type="pong",
-                status="ok",
                 message="pong",
                 data={"latency_ms": latency_ms} if latency_ms is not None else None
             )

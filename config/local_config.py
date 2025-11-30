@@ -12,8 +12,7 @@ load_dotenv(env_path)
 
 # Set environment variables for local testing (only if not already set in .env)
 os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
-os.environ.setdefault("DEFAULT_LLM_PROVIDER", "gemini")  # Use gemini from .env
-os.environ.setdefault("DEFAULT_MODEL", "gemini2.0:flash")  # Use gemini model from .env
+# Don't override DEFAULT_LLM_PROVIDER and DEFAULT_MODEL - let .env control them
 os.environ.setdefault("LOG_LEVEL", "debug")
 os.environ.setdefault("ENVIRONMENT", "development")
 
@@ -34,10 +33,10 @@ API_CONFIG = {
     "cors_origins": ["http://localhost:3000", "http://localhost:8003"]
 }
 
-# LLM configuration
+# LLM configuration - read from environment
 LLM_CONFIG = {
-    "default_provider": "gemini",
-    "default_model": "gemini2.0:flash",
+    "default_provider": os.getenv("DEFAULT_LLM_PROVIDER", "huggingface"),
+    "default_model": os.getenv("DEFAULT_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"),
     "ollama": {
         "base_url": "http://localhost:11434",
         "timeout": 60,

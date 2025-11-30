@@ -83,12 +83,17 @@ class LangChainChatService:
                 "context": metadata or {}
             }
             
-            # Invoke agent graph
-            result = await self.agent.ainvoke(state)
+            # Invoke agent graph with limited recursion to prevent excessive API calls
+            config = {"recursion_limit": 10}  # Reduced to prevent excessive API calls
+            result = await self.agent.ainvoke(state, config=config)
             
             # Extract response
             ai_message = result["messages"][-1]
             response_content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+            
+            # Get provider info from state if available
+            provider_info = result.get("context", {}).get("provider", "unknown")
+            model_info = result.get("context", {}).get("model", "unknown")
             
             # Store AI response
             await self.conversation_service.add_message(
@@ -96,7 +101,7 @@ class LangChainChatService:
                 role="assistant",
                 content=response_content,
                 user_id="assistant",
-                metadata={"model": "gemini", "langgraph": True}
+                metadata={"model": model_info, "provider": provider_info, "langgraph": True}
             )
             
             return {
@@ -106,7 +111,6 @@ class LangChainChatService:
                 "timestamp": datetime.utcnow().isoformat(),
                 "metadata": {
                     "tools_used": self._extract_tools_used(result),
-                    "model": "gemini",
                     "framework": "langgraph"
                 }
             }
@@ -178,9 +182,10 @@ class LangChainChatService:
                 "context": metadata or {}
             }
             
-            # Stream agent execution
+            # Stream agent execution with limited recursion to prevent excessive API calls
             full_response = ""
-            async for event in self.agent.astream(state):
+            config = {"recursion_limit": 10}  # Reduced to prevent excessive API calls
+            async for event in self.agent.astream(state, config=config):
                 # Extract content from event
                 if "agent" in event:
                     agent_output = event["agent"]
@@ -206,7 +211,7 @@ class LangChainChatService:
                     role="assistant",
                     content=full_response,
                     user_id="assistant",
-                    metadata={"model": "gemini", "langgraph": True, "streamed": True}
+                    metadata={"langgraph": True, "streamed": True}
                 )
             
             # Yield completion

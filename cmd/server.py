@@ -53,9 +53,9 @@ def parse_arguments():
     parser.add_argument(
         "--provider",
         type=str,
-        choices=["ollama", "gemini"],
-        default="ollama",
-        help="LLM provider to use (ollama or gemini)"
+        choices=["ollama", "gemini", "huggingface", "openai", "anthropic"],
+        default="huggingface",
+        help="LLM provider to use (ollama, gemini, huggingface, openai, or anthropic)"
     )
     parser.add_argument(
         "--config",

@@ -322,6 +322,140 @@ except ImportError:
     httpx = None
 
 
+class GroqProvider(BaseLLMProvider):
+    """Groq API provider using OpenAI-compatible interface."""
+
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize Groq provider.
+        
+        Args:
+            api_key: Groq API key
+        """
+        self.api_key = api_key or os.getenv("GROQ_API_KEY")
+        self.base_url = "https://api.groq.com/openai/v1"
+        self.client = None
+        self.logger = structlog.get_logger("groq_provider")
+        
+        if self.api_key and openai:
+            try:
+                self.client = AsyncOpenAI(
+                    base_url=self.base_url,
+                    api_key=self.api_key
+                )
+                self.logger.info("Groq provider initialized", base_url=self.base_url)
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Groq client: {str(e)}")
+
+    def validate_config(self) -> bool:
+        """Validate that the provider is properly configured."""
+        if not self.api_key:
+            self.logger.warning("Groq API key not configured")
+            return False
+        if not openai:
+            self.logger.warning("OpenAI library not available for Groq provider")
+            return False
+        return True
+
+    def get_available_models(self) -> List[str]:
+        """Get list of available models for this provider."""
+        return [
+            "llama-3.3-70b-versatile",
+            "llama-3.3-70b-specdec",
+            "llama-3.1-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it",
+            "openai/gpt-oss-20b"
+        ]
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        """Generate a response from the LLM.
+        
+        Args:
+            request: The LLM request containing messages and generation parameters
+            
+        Returns:
+            LLMResponse containing the generated content and metadata
+            
+        Raises:
+            AIModelError: If there's an error generating the response
+        """
+        if not self.client:
+            raise AIModelError("groq", request.model, "Groq client not initialized")
+
+        try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            
+            messages.extend([
+                {"role": msg.role, "content": msg.content}
+                for msg in request.messages
+            ])
+
+            response = await self.client.chat.completions.create(
+                model=request.model,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens
+            )
+
+            return LLMResponse(
+                content=response.choices[0].message.content,
+                model=response.model,
+                tokens_used=response.usage.total_tokens if response.usage else 0,
+                finish_reason=response.choices[0].finish_reason,
+                metadata={"provider": "groq"}
+            )
+
+        except Exception as e:
+            error_msg = str(e)
+            self.logger.error(f"Groq API error: {error_msg}", model=request.model)
+            raise AIModelError("groq", request.model, f"Groq API error: {error_msg}")
+
+    async def generate_stream(self, request: LLMRequest) -> AsyncGenerator[str, None]:
+        """Generate a streaming response from the LLM.
+        
+        Args:
+            request: The LLM request containing messages and generation parameters
+            
+        Yields:
+            Chunks of the generated response as they become available
+            
+        Raises:
+            AIModelError: If there's an error generating the response
+        """
+        if not self.client:
+            raise AIModelError("groq", request.model, "Groq client not initialized")
+
+        try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            
+            messages.extend([
+                {"role": msg.role, "content": msg.content}
+                for msg in request.messages
+            ])
+
+            stream = await self.client.chat.completions.create(
+                model=request.model,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=True
+            )
+
+            async for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            error_msg = str(e)
+            self.logger.error(f"Groq streaming error: {error_msg}", model=request.model)
+            raise AIModelError("groq", request.model, f"Groq streaming error: {error_msg}")
+
+
 class HuggingFaceProvider(BaseLLMProvider):
     """HuggingFace Router API provider using OpenAI-compatible interface."""
 
@@ -640,12 +774,50 @@ class LLMService:
                        preferred_provider=self.preferred_provider or 'auto',
                        prompt_length=len(self.default_system_prompt))
 
+    async def _load_provider_settings_from_db(self) -> Dict[str, Dict[str, Any]]:
+        """Load provider settings from database."""
+        try:
+            from app.database.connection import get_db_session
+            from app.models.llm_provider_settings import LLMProviderSettings
+            from sqlalchemy import select
+            
+            async for db in get_db_session():
+                result = await db.execute(
+                    select(LLMProviderSettings).where(LLMProviderSettings.is_enabled == True)
+                )
+                providers = result.scalars().all()
+                
+                settings_map = {}
+                for p in providers:
+                    settings_map[p.provider_name] = {
+                        "api_key": p.api_key,
+                        "base_url": p.base_url,
+                        "default_model": p.default_model,
+                        "priority": p.priority,
+                        "is_default": p.is_default
+                    }
+                
+                self.logger.info(f"Loaded {len(settings_map)} provider settings from database")
+                return settings_map
+        except Exception as e:
+            self.logger.warning(f"Failed to load provider settings from database: {str(e)}")
+            return {}
+
     def _initialize_providers(self):
         """Initialize all available LLM providers"""
+        # Try to load settings from database (async)
+        import asyncio
+        try:
+            db_settings = asyncio.run(self._load_provider_settings_from_db())
+        except Exception as e:
+            self.logger.warning(f"Could not load DB settings, using environment variables: {str(e)}")
+            db_settings = {}
+        
         # Initialize providers in order of preference
         providers_to_init = [
             ("ollama", OllamaProvider),
             ("gemini", GeminiProvider),
+            ("groq", GroqProvider),
             ("huggingface", HuggingFaceProvider),
             ("openai", OpenAIProvider),
             ("anthropic", AnthropicProvider)
@@ -662,18 +834,37 @@ class LLMService:
         # Initialize providers
         for provider_name, provider_class in providers_to_init:
             try:
+                # Get API key from database first, then fall back to environment
+                db_config = db_settings.get(provider_name, {})
+                api_key = db_config.get("api_key") or os.getenv(self._get_env_var_name(provider_name))
+                base_url = db_config.get("base_url")
+                
                 if provider_name == "gemini":
-                    gemini_api_key = os.getenv("GEMINI_API_KEY")
-                    if not gemini_api_key:
-                        self.logger.warning("GEMINI_API_KEY not found in environment")
+                    if not api_key:
+                        self.logger.warning(f"{provider_name}: API key not found in DB or environment")
                         continue
-                    provider = provider_class(api_key=gemini_api_key)
+                    provider = provider_class(api_key=api_key, base_url=base_url)
+                elif provider_name == "groq":
+                    if not api_key:
+                        self.logger.info(f"{provider_name}: API key not found in DB or environment, will skip")
+                        continue
+                    provider = provider_class(api_key=api_key)
+                    self.logger.info(f"Groq provider initialized with API key from {'database' if db_config.get('api_key') else 'environment'}")
                 elif provider_name == "huggingface":
-                    hf_token = os.getenv("HF_TOKEN")
-                    if not hf_token:
-                        self.logger.warning("HF_TOKEN not found in environment")
+                    if not api_key:
+                        self.logger.warning(f"{provider_name}: API key not found in DB or environment")
                         continue
-                    provider = provider_class(api_key=hf_token)
+                    provider = provider_class(api_key=api_key, base_url=base_url)
+                elif provider_name == "openai":
+                    if not api_key:
+                        self.logger.info(f"{provider_name}: API key not found, skipping")
+                        continue
+                    provider = provider_class(api_key=api_key)
+                elif provider_name == "anthropic":
+                    if not api_key:
+                        self.logger.info(f"{provider_name}: API key not found, skipping")
+                        continue
+                    provider = provider_class(api_key=api_key)
                 else:
                     provider = provider_class()
                 
@@ -688,6 +879,18 @@ class LLMService:
         
         # Log available providers
         self.logger.info("Available LLM providers", providers=list(self.providers.keys()))
+    
+    def _get_env_var_name(self, provider_name: str) -> str:
+        """Get environment variable name for a provider."""
+        env_var_map = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "huggingface": "HF_TOKEN",
+            "ollama": None
+        }
+        return env_var_map.get(provider_name)
 
     def get_available_providers(self) -> List[str]:
         """Get list of available providers"""
@@ -699,9 +902,17 @@ class LLMService:
             "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
             "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
             "gemini": ["gemini2.0:flash", "gemini2.5:pro"],
+            "groq": [
+                "llama-3.3-70b-versatile",
+                "llama-3.3-70b-specdec",
+                "llama-3.1-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
+                "openai/gpt-oss-20b"
+            ],
             "huggingface": [
                 "moonshotai/Kimi-K2-Thinking:novita",
-                "openai/gpt-oss-20b:groq",
                 "meta-llama/Llama-3.3-70B-Instruct",
                 "Qwen/Qwen2.5-72B-Instruct",
                 "mistralai/Mixtral-8x7B-Instruct-v0.1",
@@ -732,9 +943,17 @@ class LLMService:
             "claude-3-5-haiku-20241022": "anthropic",
             "claude-3-opus-20240229": "anthropic",
             
+            # Groq models
+            "llama-3.3-70b-versatile": "groq",
+            "llama-3.3-70b-specdec": "groq",
+            "llama-3.1-70b-versatile": "groq",
+            "llama-3.1-8b-instant": "groq",
+            "mixtral-8x7b-32768": "groq",
+            "gemma2-9b-it": "groq",
+            "openai/gpt-oss-20b": "groq",
+            
             # HuggingFace models
             "moonshotai/Kimi-K2-Thinking:novita": "huggingface",
-            "openai/gpt-oss-20b:groq": "huggingface",
             "meta-llama/Llama-3.3-70B-Instruct": "huggingface",
             "Qwen/Qwen2.5-72B-Instruct": "huggingface",
             "mistralai/Mixtral-8x7B-Instruct-v0.1": "huggingface",

@@ -56,12 +56,13 @@ services:
       
       # AI Model Configuration
       - OLLAMA_BASE_URL=http://172.17.0.1:11434
-      - DEFAULT_LLM_PROVIDER=gemini
-      - DEFAULT_MODEL=gemini2.0:flash
+      - DEFAULT_LLM_PROVIDER=huggingface
+      - DEFAULT_MODEL=meta-llama/Llama-3.2-3B-Instruct
       - GEMINI_API_KEY=AIzaSyDe79kNlJ_lGUXO5e-qka73mUpcvrynsBc
-      - AI_DEFAULT_MODEL=gemini2.0:flash
+      - AI_DEFAULT_MODEL=meta-llama/Llama-3.2-3B-Instruct
       - AI_MAX_TOKENS=4000
       - AI_TEMPERATURE=0.7
+      - HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN:-}
 
       # Auth Service Configuration
       - AUTH_SERVICE_GRPC_HOST=auth-service
@@ -153,7 +154,7 @@ services:
       timeout: 100s
       retries: 3
       start_period: 60s
-    command: ["python", "cmd/server.py", "--mode", "full", "--provider", "gemini", "--host", "0.0.0.0", "--port", "8003"]
+    command: ["python", "cmd/server.py", "--mode", "full", "--provider", "huggingface", "--host", "0.0.0.0", "--port", "8003"]
     profiles:
       - ai-services
       - full-stack

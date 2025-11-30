@@ -354,6 +354,7 @@ def _update_env_variable(provider_name: str, api_key: str):
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "gemini": "GEMINI_API_KEY",
+        "groq": "GROQ_API_KEY",
         "huggingface": "HF_TOKEN",
         "ollama": None  # No API key needed
     }
