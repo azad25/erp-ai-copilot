@@ -181,6 +181,26 @@ def get_llm(
             **kwargs
         )
     
+    elif provider == "ollama":
+        from langchain_community.chat_models import ChatOllama
+        import os
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Get Ollama base URL (no API key needed for local Ollama)
+        ollama_base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        
+        logger.info(f"Creating Ollama client with base_url: {ollama_base_url}")
+        logger.info(f"Using model: {model or 'unibase-erp:latest'}")
+        
+        return ChatOllama(
+            model=model or "unibase-erp:latest",
+            base_url=ollama_base_url,
+            temperature=temperature,
+            **kwargs
+        )
+    
     else:
         # Default to HuggingFace
         from langchain_huggingface import HuggingFaceEndpoint

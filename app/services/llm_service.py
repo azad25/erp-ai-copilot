@@ -6,7 +6,8 @@ Provides unified interface for interacting with various LLM providers:
 - OpenAI API (GPT-4, GPT-3.5-turbo, etc.)
 - Anthropic API (Claude models)
 - Google Gemini API
-- Future extensibility for other providers
+- HugginFace 
+- Groq
 """
 
 import os
@@ -935,9 +936,24 @@ class LLMService:
     def get_available_models(self) -> Dict[str, List[str]]:
         """Get available models by provider"""
         models = {
-            "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
-            "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
-            "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+            "openai": [
+                "gpt-4o",           # Latest GPT-4 Omni (2025)
+                "gpt-4o-mini",      # Faster, cheaper GPT-4o
+                "gpt-4-turbo",      # GPT-4 Turbo
+                "gpt-4",            # Standard GPT-4
+                "gpt-3.5-turbo"     # GPT-3.5
+            ],
+            "anthropic": [
+                "claude-sonnet-4-5-20250929",    # Latest Claude Sonnet 4.5 (2025)
+                "claude-3-5-sonnet-20241022",    # Claude 3.5 Sonnet
+                "claude-3-5-haiku-20241022",     # Claude 3.5 Haiku
+                "claude-3-opus-20240229"         # Claude 3 Opus
+            ],
+            "gemini": [
+                "gemini-2.5-flash",  # Latest Gemini 2.5 Flash (2025)
+                "gemini-2.5-pro",    # Latest Gemini 2.5 Pro (2025)
+                "gemini-2.0-flash"   # Gemini 2.0 Flash
+            ],
             "groq": [
                 "llama-3.3-70b-versatile",
                 "llama-3.3-70b-specdec",
@@ -956,7 +972,11 @@ class LLMService:
                 "microsoft/Phi-3-medium-4k-instruct"
             ],
             "ollama": [
-                "unibase-erp",  # Custom ERP model
+                "unibase-erp:latest",  # Custom ERP model
+                "llama3.2:3b",         # Llama 3.2 3B
+                "llama3.1:8b",         # Llama 3.1 8B
+                "llama3.1:latest",     # Llama 3.1 (latest)
+                "gemma3:latest"        # Gemma 3
             ]
         }
         
@@ -967,14 +987,15 @@ class LLMService:
     def get_provider_for_model(self, model: str) -> Optional[str]:
         """Get the provider for a given model"""
         model_mapping = {
-            # OpenAI models
-            "gpt-4": "openai",
-            "gpt-4-turbo": "openai",
-            "gpt-3.5-turbo": "openai",
+            # OpenAI models (2025)
             "gpt-4o": "openai",
             "gpt-4o-mini": "openai",
+            "gpt-4-turbo": "openai",
+            "gpt-4": "openai",
+            "gpt-3.5-turbo": "openai",
             
-            # Anthropic models
+            # Anthropic models (2025)
+            "claude-sonnet-4-5-20250929": "anthropic",
             "claude-3-5-sonnet-20241022": "anthropic",
             "claude-3-5-haiku-20241022": "anthropic",
             "claude-3-opus-20240229": "anthropic",
@@ -996,11 +1017,18 @@ class LLMService:
             "google/gemma-2-9b-it": "huggingface",
             "microsoft/Phi-3-medium-4k-instruct": "huggingface",
             
-            # Ollama models (partial list)
-            "unibase-erp": "ollama",  # Custom ERP model
+            # Ollama models (from host PC)
+            "unibase-erp:latest": "ollama",
+            "unibase-erp": "ollama",
+            "llama3.2:3b": "ollama",
+            "llama3.1:8b": "ollama",
+            "llama3.1:latest": "ollama",
+            "llama3.1": "ollama",
+            "gemma3:latest": "ollama",
+            "gemma3": "ollama",
+            # Additional common Ollama models
             "llama2": "ollama",
             "llama3": "ollama",
-            "llama3.1": "ollama",
             "llama3.2": "ollama",
             "codellama": "ollama",
             "mistral": "ollama",
@@ -1012,6 +1040,7 @@ class LLMService:
             "deepseek-coder": "ollama",
             "codestral": "ollama",
             "phi3": "ollama",
+            "phi3.5": "ollama",
             "phi3.5": "ollama",
             
             # Gemini models

@@ -153,10 +153,16 @@ def agent_node(state: AgentState) -> AgentState:
     
     # Bind tools with auto tool choice - let the model decide when to use tools
     try:
-        llm_with_tools = llm.bind_tools(tools, tool_choice="auto")
+        # Some providers (like Ollama) may not support tool binding
+        if hasattr(llm, 'bind_tools'):
+            llm_with_tools = llm.bind_tools(tools, tool_choice="auto")
+            logger.info(f"Successfully bound {len(tools)} tools to LLM")
+        else:
+            logger.warning(f"Provider {provider_settings['provider']} does not support tool binding, using LLM without tools")
+            llm_with_tools = llm
     except Exception as e:
         # If binding tools fails, fall back to no tools
-        logger.warning(f"Failed to bind tools: {e}, using LLM without tools")
+        logger.warning(f"Failed to bind tools: {str(e)}, using LLM without tools")
         llm_with_tools = llm
     
     # Get prompt

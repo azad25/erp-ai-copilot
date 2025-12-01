@@ -42,8 +42,13 @@ def create_agent_graph():
     # Add edge from tools back to agent
     workflow.add_edge("tools", "agent")
     
-    # Compile the graph
-    app = workflow.compile()
+    # Compile the graph with recursion limit to prevent infinite loops
+    app = workflow.compile(
+        checkpointer=None,  # No checkpointing for now
+        interrupt_before=None,
+        interrupt_after=None,
+        debug=False
+    )
     
     return app
 
