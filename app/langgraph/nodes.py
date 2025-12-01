@@ -153,37 +153,45 @@ def agent_node(state: AgentState) -> AgentState:
     
     # Bind tools with auto tool choice - let the model decide when to use tools
     try:
-        # Some providers (like Ollama) may not support tool binding
+        # Check if the LLM supports tool binding
         if hasattr(llm, 'bind_tools'):
-            llm_with_tools = llm.bind_tools(tools, tool_choice="auto")
-            logger.info(f"Successfully bound {len(tools)} tools to LLM")
+            try:
+                llm_with_tools = llm.bind_tools(tools, tool_choice="auto")
+                logger.info(f"Successfully bound {len(tools)} tools to {provider_settings['provider']} LLM")
+            except NotImplementedError:
+                # Model doesn't support tool calling at all
+                logger.warning(f"Provider {provider_settings['provider']} model {provider_settings.get('model', 'unknown')} does not support tool calling, using LLM without tools")
+                llm_with_tools = llm
+            except TypeError as te:
+                # Some models don't support tool_choice parameter
+                logger.info(f"Trying to bind tools without tool_choice parameter: {str(te)}")
+                try:
+                    llm_with_tools = llm.bind_tools(tools)
+                    logger.info(f"Successfully bound {len(tools)} tools to {provider_settings['provider']} LLM (without tool_choice)")
+                except NotImplementedError:
+                    logger.warning(f"Provider {provider_settings['provider']} model does not support tool calling, using LLM without tools")
+                    llm_with_tools = llm
         else:
-            logger.warning(f"Provider {provider_settings['provider']} does not support tool binding, using LLM without tools")
+            logger.warning(f"Provider {provider_settings['provider']} LLM does not have bind_tools method, using LLM without tools")
             llm_with_tools = llm
     except Exception as e:
         # If binding tools fails, fall back to no tools
-        logger.warning(f"Failed to bind tools: {str(e)}, using LLM without tools")
+        error_msg = str(e) if str(e) else repr(e)
+        logger.warning(f"Failed to bind tools to {provider_settings['provider']}: {error_msg}, using LLM without tools")
+        logger.error(f"Tool binding error details: {type(e).__name__}: {error_msg}")
         llm_with_tools = llm
-    
-    # Get prompt
-    prompt = get_agent_prompt()
     
     # Format messages for the agent
     messages = state["messages"]
     
-    # Invoke LLM with tools
-    response = llm_with_tools.invoke(
-        prompt.format_messages(
-            input=messages[-1].content if messages else "",
-            chat_history=messages[:-1] if len(messages) > 1 else [],
-            agent_scratchpad=[]
-        )
-    )
+    # Invoke LLM with tools - pass messages directly
+    # The LLM will see the full conversation including tool results
+    response = llm_with_tools.invoke(messages)
     
-    # Return updated state
+    # Return updated state - append response to messages
     return {
         **state,
-        "messages": [response]
+        "messages": messages + [response]
     }
 
 
@@ -197,15 +205,26 @@ def should_continue(state: AgentState) -> Literal["tools", "end"]:
     Returns:
         Next node to visit
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     messages = state["messages"]
     last_message = messages[-1]
     
     # Check if there are tool calls
     has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls and len(last_message.tool_calls) > 0
     
-    # If there are tool calls, continue to tools
+    # Log decision
     if has_tool_calls:
+        tool_names = [tc.get("name", "unknown") if isinstance(tc, dict) else getattr(tc, "name", "unknown") for tc in last_message.tool_calls]
+        logger.info(f"Agent wants to call tools: {tool_names}")
         return "tools"
     
-    # Otherwise, end immediately - don't loop
+    # Check if last message has content (final response)
+    has_content = hasattr(last_message, "content") and last_message.content
+    if has_content:
+        logger.info(f"Agent generated final response (length: {len(last_message.content)})")
+    else:
+        logger.warning("Agent response has no content and no tool calls - ending anyway")
+    
     return "end"

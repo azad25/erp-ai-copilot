@@ -19,6 +19,7 @@ from app.models.api import (
     ConversationListResponse, ConversationResponse, MessageResponse
 )
 from app.services.chat_service import ChatService
+from app.services.conversation_service import conversation_service
 from app.services.auth_service import get_current_user
 from app.core.metrics import CHAT_REQUESTS, CHAT_RESPONSES, CHAT_ERRORS
 
@@ -400,18 +401,24 @@ async def get_conversation_messages(
         )
         
         # Convert to response format
+        from datetime import datetime as dt
         message_responses = []
         for msg in messages:
+            # Parse created_at if it's a string
+            created_at = msg["created_at"]
+            if isinstance(created_at, str):
+                created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
+            
             message_responses.append(MessageResponse(
                 id=uuid.UUID(msg["message_id"]) if msg["message_id"] else uuid.uuid4(),
                 conversation_id=uuid.UUID(conversation_id) if conversation_id else uuid.uuid4(),
                 user_id=uuid.UUID(msg["user_id"]) if msg.get("user_id") else None,
                 role=msg["role"],
                 content=msg["content"],
-                metadata_json=msg.get("metadata", {}),
+                metadata=msg.get("metadata", {}),
                 tokens_used=msg.get("tokens_used", 0),
                 model_used=msg.get("model_used"),
-                created_at=msg["created_at"]
+                created_at=created_at
             ))
         
         return message_responses

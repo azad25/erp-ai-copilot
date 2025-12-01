@@ -74,7 +74,7 @@ class ToolRegistry:
         """
         return self._tools.get(tool_name)
     
-    def list_tools(self) -> List[Dict[str, any]]:
+    def list_tools(self) -> List[Dict[str, Any]]:
         """
         List all available tools with their metadata
         
@@ -105,7 +105,7 @@ class ToolRegistry:
             if tool.metadata.category.lower() == category.lower()
         ]
     
-    def search_tools(self, query: str) -> List[Dict[str, any]]:
+    def search_tools(self, query: str) -> List[Dict[str, Any]]:
         """
         Search tools by name or description
         
@@ -225,7 +225,7 @@ class ToolRegistry:
         tasks = [self.execute_tool(request) for request in requests]
         return await asyncio.gather(*tasks)
     
-    def get_tool_stats(self, tool_name: Optional[str] = None) -> Dict[str, any]:
+    def get_tool_stats(self, tool_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Get execution statistics for tools
         
@@ -246,7 +246,7 @@ class ToolRegistry:
             "tool_stats": dict(self._execution_stats)
         }
     
-    async def health_check(self) -> Dict[str, any]:
+    async def health_check(self) -> Dict[str, Any]:
         """
         Perform health check on all registered tools
         

@@ -182,15 +182,21 @@ class LangChainChatService:
                 "context": metadata or {}
             }
             
-            # Stream agent execution with limited recursion to prevent excessive API calls
+            # Stream agent execution with reasonable recursion limit
             full_response = ""
-            config = {"recursion_limit": 10}  # Reduced to prevent excessive API calls
+            config = {"recursion_limit": 25}  # Allow for multi-step tool usage
             async for event in self.agent.astream(state, config=config):
                 # Extract content from event
                 if "agent" in event:
                     agent_output = event["agent"]
                     if "messages" in agent_output:
                         last_message = agent_output["messages"][-1]
+                        
+                        # Skip messages that are just tool calls (no content)
+                        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+                            # This is a tool call message, don't show it yet
+                            continue
+                        
                         if hasattr(last_message, "content"):
                             content = last_message.content
                             if content and content != full_response:

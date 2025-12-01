@@ -168,12 +168,12 @@ class ConversationResponse(BaseModel):
     """Conversation response model."""
     
     id: UUID
-    organization_id: UUID
-    user_id: UUID
+    organization_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
     title: str
-    status: ConversationStatus
-    context: Dict[str, Any]
-    metadata: Dict[str, Any]
+    status: Optional[ConversationStatus] = None
+    context: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
     message_count: Optional[int] = 0

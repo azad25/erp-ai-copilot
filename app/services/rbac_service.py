@@ -194,7 +194,7 @@ class RBACService:
         return True
     
     def filter_query_by_role(self, user_role: str, user_id: str, 
-                            department_id: Optional[str] = None) -> Dict[str, any]:
+                            department_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get query filters based on user role
         

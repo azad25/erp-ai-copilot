@@ -182,7 +182,8 @@ def get_llm(
         )
     
     elif provider == "ollama":
-        from langchain_community.chat_models import ChatOllama
+        # Use langchain-ollama for proper tool support (0.3.x+)
+        from langchain_ollama import ChatOllama
         import os
         import logging
         
@@ -194,11 +195,13 @@ def get_llm(
         logger.info(f"Creating Ollama client with base_url: {ollama_base_url}")
         logger.info(f"Using model: {model or 'unibase-erp:latest'}")
         
+        # ChatOllama from langchain-ollama supports tool binding for compatible models
         return ChatOllama(
             model=model or "unibase-erp:latest",
             base_url=ollama_base_url,
             temperature=temperature,
-            **kwargs
+            format="json" if kwargs.get("format") == "json" else None,  # Enable JSON mode if requested
+            **{k: v for k, v in kwargs.items() if k != "format"}  # Pass other kwargs
         )
     
     else:

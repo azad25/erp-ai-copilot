@@ -1,6 +1,10 @@
 """
 Main FastAPI application for the AI Copilot service.
 """
+import warnings
+# Suppress Pydantic ArbitraryTypeWarning from third-party packages
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic._internal._generate_schema")
+
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket

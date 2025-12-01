@@ -6,7 +6,7 @@ Tools for API calls, database access, and document search.
 
 from typing import List, Dict, Any, Optional
 from langchain.tools import Tool, StructuredTool
-from langchain.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 
 from app.services.api_gateway_client import get_api_gateway_client
 from app.services.erp_data_service import get_erp_data_service
@@ -322,14 +322,19 @@ def get_erp_tools() -> List[Tool]:
         StructuredTool.from_function(
             coroutine=call_api_tool,
             name="call_api",
-            description="""Call ERP API endpoints to retrieve or modify data.
-            Use this when you need to:
-            - Get user information
-            - Create/update/delete records
-            - Access business data
+            description="""Call ERP API endpoints to retrieve or modify specific business data.
+            
+            🎯 Use when user asks to:
+            - "Get user details for..." → GET /api/v1/users/{id}
+            - "Show recent orders" → GET /api/v1/sales/orders
+            - "List products" → GET /api/v1/inventory/products
+            - "Create new customer" → POST /api/v1/customers
+            - "Update order status" → PUT /api/v1/sales/orders/{id}
+            
+            Keywords: get, show, list, create, update, delete, fetch, retrieve
             
             Examples:
-            - GET /api/v1/users - List users
+            - GET /api/v1/users - List all users
             - POST /api/v1/sales/orders - Create order
             - GET /api/v1/inventory/products - List products
             """,
@@ -339,14 +344,21 @@ def get_erp_tools() -> List[Tool]:
         StructuredTool.from_function(
             coroutine=query_data_tool,
             name="query_database",
-            description="""Query ERP databases for statistics and summaries.
-            Use this when you need:
-            - User statistics (total, active, recent signups)
-            - Conversation analytics
-            - Cache statistics
-            - System overview
+            description="""Query ERP databases for statistics, counts, and summaries.
             
-            Query types: users, conversations, cache, system
+            🎯 Use when user asks:
+            - "How many users..." → query_type="users"
+            - "Show conversation stats" → query_type="conversations"
+            - "Cache statistics" → query_type="cache"
+            - "System overview" → query_type="system"
+            
+            Keywords: how many, count, total, statistics, stats, summary, overview
+            
+            Query types:
+            - users: Total users, active users, recent signups
+            - conversations: Chat analytics, message counts
+            - cache: Redis cache statistics
+            - system: Overall system health and metrics
             """,
             args_schema=DataQueryInput
         ),
@@ -354,14 +366,25 @@ def get_erp_tools() -> List[Tool]:
         StructuredTool.from_function(
             coroutine=search_docs_tool,
             name="search_documentation",
-            description="""Search ERP documentation and knowledge base.
-            Use this when you need to:
-            - Explain how the system works
-            - Find technical documentation
-            - Answer questions about features
-            - Provide implementation details
+            description="""Search ERP documentation and knowledge base for explanations and guides.
             
-            Always search docs first before answering questions about the ERP system.
+            🎯 Use when user asks:
+            - "How does... work?" → search for feature documentation
+            - "What is...?" → search for concept explanation
+            - "Explain..." → search for detailed guide
+            - "Architecture" → search for system design docs
+            - "How to..." → search for tutorials
+            
+            Keywords: how, what, why, explain, architecture, feature, guide, tutorial, documentation
+            
+            ⚠️ ALWAYS use this FIRST for questions about:
+            - System architecture and design
+            - Feature explanations
+            - Technical concepts
+            - Implementation guides
+            - Best practices
+            
+            Returns: Relevant documentation excerpts with sources
             """,
             args_schema=DocumentSearchInput
         ),
